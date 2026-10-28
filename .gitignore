@@ -1,0 +1,9 @@
+**/bin/
+**/obj/
+*.db
+*.db-shm
+*.db-wal
+/data/ledger.json
+/data/ledger.json.tmp
+.vs/
+.idea/
