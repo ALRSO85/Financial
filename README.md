@@ -129,4 +129,4 @@ Erros de validação retornam `400`, recurso ausente `404`, conflito/idempotênc
 
 ## Publicação
 
-O repositório local contém o projeto pronto para versionamento. Para cumprir a publicação pública, crie um repositório GitHub público e configure-o como `origin`, depois envie a branch principal. Não há remote GitHub configurado neste checkout.
+O código está publicado em [github.com/ALRSO85/Financial](https://github.com/ALRSO85/Financial), na branch `main`. A integração contínua executa restore, build e testes a cada push e pull request.
