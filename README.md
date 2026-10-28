@@ -68,7 +68,7 @@ curl.exe -H "Authorization: Bearer $token" http://localhost:5080/customers/me/ba
 curl.exe -G --data-urlencode "at=28/10/2026 09:00:00 -03:00" -H "Authorization: Bearer $token" http://localhost:5080/customers/me/balance
 ```
 
-O parâmetro `at` usa `dd/MM/yyyy HH:mm:ss zzz`, com fuso explícito. O exemplo representa o horário de Brasília (`-03:00`). As datas nas respostas JSON seguem ISO 8601; internamente, os instantes são comparados e persistidos em UTC.
+O parâmetro `at` usa `dd/MM/yyyy HH:mm:ss zzz`, com fuso explícito. O exemplo representa o horário de Brasília (`-03:00`).
 
 A conta é criada com o `sub` do token; somente tokens com o mesmo `sub` podem consultar ou movimentar essa conta. A API valida assinatura, emissor, audiência e validade do token. Ela não emite tokens nem autentica credenciais de usuário: em produção, configure `Jwt:Authority`, `Jwt:Issuer` e `Jwt:Audience` para um provedor de identidade confiável e remova `Jwt:SigningKey`. Os modos `Authority` e `SigningKey` são mutuamente exclusivos. O script local usa uma chave simétrica apenas para testar; mantenha a chave fora do repositório e não a reutilize em produção.
 
