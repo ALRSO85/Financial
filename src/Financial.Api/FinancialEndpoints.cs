@@ -89,7 +89,7 @@ public static class FinancialEndpoints
         })
             .WithName("GetBalance")
             .WithSummary("Consulta o saldo da conta")
-            .WithDescription("Sem o parâmetro at, retorna o saldo atual. Com at em ISO-8601, calcula o saldo até aquele instante.")
+            .WithDescription("Sem o parâmetro at, retorna o saldo atual. Com at no formato dd/MM/yyyy HH:mm:ss zzz, calcula o saldo até aquele instante.")
             .Produces<BalanceResponse>(StatusCodes.Status200OK)
             .ProducesValidationProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -108,7 +108,7 @@ public static class FinancialEndpoints
         })
             .WithName("GetCustomerBalance")
             .WithSummary("Consulta o saldo consolidado do titular autenticado")
-            .WithDescription("Soma os saldos de todas as contas do titular. O parâmetro at é opcional e deve conter fuso horário explícito.")
+            .WithDescription("Soma os saldos de todas as contas do titular. O parâmetro at é opcional e usa o formato dd/MM/yyyy HH:mm:ss zzz.")
             .Produces<CustomerBalanceResponse>(StatusCodes.Status200OK)
             .ProducesValidationProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -123,16 +123,9 @@ public static class FinancialEndpoints
     {
         instant = null;
         if (value is null) return true;
-        string[] formats =
-        [
-            "yyyy-MM-dd'T'HH:mm:sszzz",
-            "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz",
-            "yyyy-MM-dd'T'HH:mm:ss'Z'",
-            "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'"
-        ];
-
-        if (!DateTimeOffset.TryParseExact(value, formats, CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed))
+        const string format = "dd/MM/yyyy HH:mm:ss zzz";
+        if (!DateTimeOffset.TryParseExact(value, format, CultureInfo.GetCultureInfo("pt-BR"),
+                DateTimeStyles.AdjustToUniversal, out var parsed))
             return false;
 
         instant = parsed;
@@ -140,7 +133,7 @@ public static class FinancialEndpoints
     }
 
     private static IResult InvalidInstantProblem() =>
-        Results.ValidationProblem(new Dictionary<string, string[]> { ["at"] = ["Informe uma data ISO-8601 válida com fuso horário explícito, como Z ou ±HH:mm."] });
+        Results.ValidationProblem(new Dictionary<string, string[]> { ["at"] = ["Informe uma data no formato dd/MM/yyyy HH:mm:ss zzz, como 28/10/2026 09:00:00 -03:00."] });
 
     private static IResult NotFoundProblem() =>
         Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "Recurso não encontrado.");

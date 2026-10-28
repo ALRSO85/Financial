@@ -40,7 +40,7 @@ Um `SemaphoreSlim` global na aplicação serializa todas as chamadas na instânc
 
 O saldo atual está materializado no agregado, mas como cada chamada carrega e desserializa o arquivo completo, a leitura atual também cresce com o tamanho do JSON. O saldo histórico soma entradas até `OccurredAt` em memória. Os instantes são serializados em ISO-8601 e mantidos monotônicos por conta: se o relógio recuar ou repetir um instante, o próximo lançamento avança um tick após o último registrado. O `AsOf` do saldo atual não fica antes do último movimento. `OccurredAt` é o horário de registro ordenado, não uma eventual data-valor do negócio. Em produção, essa ordenação deve vir de sequência/commit do banco, com relógio sincronizado para auditoria.
 
-O parâmetro histórico `at` usa ISO 8601 e precisa incluir o fuso (`Z` ou `±HH:mm`). Os exemplos brasileiros usam o offset de Brasília (`-03:00`). A aplicação compara instantes, persiste `OccurredAt` em UTC e mantém ISO 8601 nas respostas JSON; a interface cliente pode formatar a apresentação segundo `pt-BR`. Não usamos `dd/MM/yyyy HH:mm` no contrato HTTP porque sua interpretação depende da cultura configurada no cliente e no servidor.
+O parâmetro histórico `at` usa o padrão brasileiro `dd/MM/yyyy HH:mm:ss zzz` e exige o fuso. Exemplo no horário de Brasília: `28/10/2026 09:00:00 -03:00`. A aplicação compara os instantes e persiste `OccurredAt` em UTC.
 
 O armazenamento JSON foi escolhido porque o objetivo desta entrega é validar o desenho e os casos de uso sem exigir a instalação de um servidor ou introduzir um provider de banco. O arquivo é legível, fácil de inspecionar e os testes podem criar um arquivo isolado por execução. SQLite também seria uma opção local válida se o exercício priorizasse transações relacionais; ainda assim, adicionaria provider e comportamento específico de banco, e continuaria sendo uma base em arquivo adequada a uma única instância, não uma solução de alta disponibilidade.
 
@@ -69,7 +69,7 @@ No ambiente `Development`, Swagger UI fica em `/swagger` e o documento OpenAPI e
 | `POST /accounts/{id}/transactions` | Registra `credit` ou `debit` em centavos, usando `idempotencyKey` |
 | `GET /accounts/{id}/transactions/{transactionId}` | Consulta um lançamento somente para o titular da conta |
 | `GET /accounts/{id}/balance` | Retorna o saldo atual |
-| `GET /accounts/{id}/balance?at={ISO-8601}` | Retorna o saldo até o instante informado |
+| `GET /accounts/{id}/balance?at={data/hora}` | Retorna o saldo até o instante informado (`dd/MM/yyyy HH:mm:ss zzz`) |
 | `GET /customers/me/balance` | Consolida as contas do titular autenticado, no instante atual ou em `at` |
 
 ## Evolução para produção

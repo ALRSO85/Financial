@@ -59,16 +59,16 @@ O `201 Created` retorna a URL do lançamento criado. Ela pode ser consultada pel
 curl.exe -H "Authorization: Bearer $token" http://localhost:5080/accounts/{accountId}/transactions/{transactionId}
 ```
 
-Consultar saldo atual ou posição até um instante ISO-8601:
+Consultar saldo atual ou posição até uma data/hora no padrão brasileiro:
 
 ```powershell
 curl.exe -H "Authorization: Bearer $token" http://localhost:5080/accounts/{accountId}/balance
-curl.exe -H "Authorization: Bearer $token" "http://localhost:5080/accounts/{accountId}/balance?at=2026-10-28T09:00:00-03:00"
+curl.exe -G --data-urlencode "at=28/10/2026 09:00:00 -03:00" -H "Authorization: Bearer $token" http://localhost:5080/accounts/{accountId}/balance
 curl.exe -H "Authorization: Bearer $token" http://localhost:5080/customers/me/balance
-curl.exe -H "Authorization: Bearer $token" "http://localhost:5080/customers/me/balance?at=2026-10-28T09:00:00-03:00"
+curl.exe -G --data-urlencode "at=28/10/2026 09:00:00 -03:00" -H "Authorization: Bearer $token" http://localhost:5080/customers/me/balance
 ```
 
-Ao informar `at`, use ISO 8601 com fuso horário explícito. Os exemplos usam o horário de Brasília (`-03:00`); o sistema compara e persiste os instantes em UTC. O JSON da API mantém ISO 8601, e a aplicação cliente pode formatar a exibição conforme `pt-BR`.
+O parâmetro `at` usa `dd/MM/yyyy HH:mm:ss zzz`, com fuso explícito. O exemplo representa o horário de Brasília (`-03:00`); o sistema compara e persiste os instantes em UTC.
 
 A conta é criada com o `sub` do token; somente tokens com o mesmo `sub` podem consultar ou movimentar essa conta. A API valida assinatura, emissor, audiência e validade do token. Ela não emite tokens nem autentica credenciais de usuário: em produção, configure `Jwt:Authority`, `Jwt:Issuer` e `Jwt:Audience` para um provedor de identidade confiável e remova `Jwt:SigningKey`. Os modos `Authority` e `SigningKey` são mutuamente exclusivos. O script local usa uma chave simétrica apenas para testar; mantenha a chave fora do repositório e não a reutilize em produção.
 
@@ -135,7 +135,7 @@ Antes de exposição externa, acrescentaria TLS, gestão segura de chaves, cript
 | `POST /accounts/{id}/transactions` | Registra `credit` ou `debit`, em centavos, com `idempotencyKey` |
 | `GET /accounts/{id}/transactions/{transactionId}` | Consulta um lançamento da conta |
 | `GET /accounts/{id}/balance` | Saldo atual |
-| `GET /accounts/{id}/balance?at={ISO-8601}` | Saldo até o instante informado |
+| `GET /accounts/{id}/balance?at={data/hora}` | Saldo até o instante informado (`dd/MM/yyyy HH:mm:ss zzz`) |
 | `GET /customers/me/balance` | Saldo consolidado das contas do titular autenticado, atual ou histórico |
 
 Erros de validação retornam `400`, recurso ausente `404`, conflito/idempotência `409` e saldo insuficiente/overflow `422`. Erros da API usam `ProblemDetails` (`application/problem+json`); falhas inesperadas são tratadas pelo middleware padrão de exceções.

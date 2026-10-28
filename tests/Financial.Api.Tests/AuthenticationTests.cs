@@ -113,19 +113,19 @@ public sealed class AuthenticationTests : IAsyncLifetime
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateToken("customer-123"));
         var ownerResponse = await _client.GetAsync($"/accounts/{account.Id}/balance");
         Assert.Equal(HttpStatusCode.OK, ownerResponse.StatusCode);
-        var ambiguousInstant = await _client.GetAsync($"/accounts/{account.Id}/balance?at=2026-10-28T12:00:00");
+        var ambiguousInstant = await _client.GetAsync($"/accounts/{account.Id}/balance?at=28%2F10%2F2026%2009%3A00%3A00");
         Assert.Equal(HttpStatusCode.BadRequest, ambiguousInstant.StatusCode);
         Assert.Equal("application/problem+json", ambiguousInstant.Content.Headers.ContentType?.MediaType);
         var localizedInstant = await _client.GetAsync($"/accounts/{account.Id}/balance?at=28%2F10%2F2026%2009%3A00%3A00%20-03%3A00");
-        Assert.Equal(HttpStatusCode.BadRequest, localizedInstant.StatusCode);
-        var explicitInstant = await _client.GetAsync($"/accounts/{account.Id}/balance?at=2026-10-28T12:00:00Z");
+        Assert.Equal(HttpStatusCode.OK, localizedInstant.StatusCode);
+        var explicitInstant = await _client.GetAsync($"/accounts/{account.Id}/balance?at=28%2F10%2F2026%2012%3A00%3A00%20%2B00%3A00");
         Assert.Equal(HttpStatusCode.OK, explicitInstant.StatusCode);
-        var brazilianInstant = await _client.GetAsync($"/accounts/{account.Id}/balance?at=2026-10-28T09:00:00-03:00");
-        Assert.Equal(HttpStatusCode.OK, brazilianInstant.StatusCode);
+        var isoInstant = await _client.GetAsync($"/accounts/{account.Id}/balance?at=2026-10-28T12:00:00Z");
+        Assert.Equal(HttpStatusCode.BadRequest, isoInstant.StatusCode);
         var utcBalance = (await JsonSerializer.DeserializeAsync<BalanceResponse>(
             await explicitInstant.Content.ReadAsStreamAsync(), new JsonSerializerOptions(JsonSerializerDefaults.Web)))!;
         var brazilianBalance = (await JsonSerializer.DeserializeAsync<BalanceResponse>(
-            await brazilianInstant.Content.ReadAsStreamAsync(), new JsonSerializerOptions(JsonSerializerDefaults.Web)))!;
+            await localizedInstant.Content.ReadAsStreamAsync(), new JsonSerializerOptions(JsonSerializerDefaults.Web)))!;
         Assert.Equal(utcBalance.AsOf, brazilianBalance.AsOf);
         Assert.Equal(utcBalance.BalanceInCents, brazilianBalance.BalanceInCents);
 
