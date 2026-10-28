@@ -72,6 +72,8 @@ Ao informar `at`, use ISO 8601 com fuso horário explícito. Os exemplos usam o 
 
 A conta é criada com o `sub` do token; somente tokens com o mesmo `sub` podem consultar ou movimentar essa conta. A API valida assinatura, emissor, audiência e validade do token. Ela não emite tokens nem autentica credenciais de usuário: em produção, configure `Jwt:Authority`, `Jwt:Issuer` e `Jwt:Audience` para um provedor de identidade confiável e remova `Jwt:SigningKey`. Os modos `Authority` e `SigningKey` são mutuamente exclusivos. O script local usa uma chave simétrica apenas para testar; mantenha a chave fora do repositório e não a reutilize em produção.
 
+Os comandos HTTP acima usam `curl.exe` no Windows. Em Linux ou macOS, use `curl` no lugar; para executar os scripts `.ps1`, instale PowerShell 7 (`pwsh`).
+
 ## Testes
 
 ```bash
@@ -101,7 +103,7 @@ O domínio não depende de HTTP ou armazenamento. A aplicação depende do domí
 - **Moeda assumida:** os valores em centavos representam reais (BRL). O protótipo não aceita outras moedas nem faz conversão cambial.
 - **Persistência local:** JSON foi escolhido para deixar o exercício autocontido, sem exigir a instalação de um servidor ou pacote de banco, e para facilitar inspeção e isolamento dos testes. As gravações são serializadas dentro do processo, escritas em arquivo temporário e depois substituídas no mesmo diretório.
 - **Saldo materializado:** o saldo atual está no agregado `Account`; como a persistência JSON carrega o arquivo inteiro, a leitura e escrita crescem com o ledger. Um banco relacional permitirá consultas indexadas e snapshots históricos se o volume justificar.
-- **Concorrência neste protótipo:** um `SemaphoreSlim` serializa operações dentro de uma instância. Débitos não podem produzir saldo negativo.
+- **Concorrência neste protótipo:** um `SemaphoreSlim` global serializa todas as chamadas na instância, inclusive consultas. Isso simplifica a proteção do arquivo JSON, mas limita a capacidade sob concorrência. Débitos não podem produzir saldo negativo.
 - **Idempotência:** chave única por conta; repetição com os mesmos campos devolve o lançamento original, e conteúdo diferente na mesma chave retorna 409.
 - **DDD e Clean Architecture proporcionais:** `Account` protege regras do agregado; `Money` encapsula centavos; `FinancialEntry` é imutável. Casos de uso dependem da porta `IFinancialRepository`, e JSON fica no adapter de infraestrutura. A seleção e o registro do provider ficam em `FinancialPersistenceRegistration`; um adapter relacional futuro pode implementar a mesma porta sem alterar os casos de uso ou o domínio. Não há mensageria ou serviços distribuídos sem necessidade demonstrada.
 

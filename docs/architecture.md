@@ -34,7 +34,7 @@ A consulta `GET /customers/me/balance` consolida todas as contas associadas ao `
 4. A aplicação adiciona um `FinancialEntry` imutável e salva o snapshot atualizado.
 5. A infraestrutura escreve JSON em arquivo temporário e o move sobre o arquivo ativo.
 
-Um `SemaphoreSlim` na aplicação serializa operações dentro da instância. Isso protege a sequência leitura-modificação-gravação apenas enquanto há uma única instância do processo.
+Um `SemaphoreSlim` global na aplicação serializa todas as chamadas na instância, inclusive consultas. Isso protege o acesso ao snapshot JSON e a sequência leitura-modificação-gravação enquanto há uma única instância, mas impede leituras concorrentes e limita a capacidade. Esse limite é intencional no protótipo; para produção, o armazenamento e a estratégia de concorrência precisam ser substituídos por operações transacionais e controle por conta no banco.
 
 ## Consultas e persistência
 
