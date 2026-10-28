@@ -106,6 +106,51 @@ tests/
 
 O domínio não depende de HTTP ou armazenamento. A aplicação depende do domínio e define `IFinancialRepository`; a infraestrutura implementa essa porta e a API conecta as dependências. A documentação de decisões e limites fica em [`docs/architecture.md`](docs/architecture.md).
 
+## Fluxo principal
+
+```mermaid
+sequenceDiagram
+    actor Cliente
+    participant API as Financial.Api
+    participant App as Financial.Application
+    participant Domain as Financial.Domain
+    participant Repo as IFinancialRepository
+    participant JSON as financial.json
+
+    rect rgb(240, 248, 255)
+        Note over Cliente,JSON: Registro de crédito ou débito
+        Cliente->>API: POST /accounts/{id}/transactions com JWT
+        API->>API: Valida token e obtém sub
+        API->>App: PostAsync(conta, titular, lançamento)
+        App->>Repo: LoadAsync()
+        Repo->>JSON: Lê snapshot
+        JSON-->>Repo: Contas e lançamentos
+        Repo-->>App: Snapshot
+        App->>Domain: Account.Apply(tipo, valor)
+        Domain-->>App: Conta com saldo atualizado
+        App->>Repo: SaveAsync(snapshot atualizado)
+        Repo->>JSON: Escreve temporário e substitui arquivo
+        JSON-->>Repo: Gravação concluída
+        Repo-->>App: Confirmação
+        App-->>API: Lançamento novo ou idempotente
+        API-->>Cliente: 201 novo / 200 repetição idempotente
+    end
+
+    rect rgb(245, 250, 240)
+        Note over Cliente,JSON: Consulta de saldo
+        Cliente->>API: GET /accounts/{id}/balance ou /customers/me/balance com JWT e at opcional
+        API->>API: Valida token e obtém sub
+        API->>App: GetBalanceAsync ou GetCustomerBalanceAsync(conta, titular, at)
+        App->>Repo: LoadAsync()
+        Repo->>JSON: Lê snapshot
+        JSON-->>Repo: Contas e lançamentos
+        Repo-->>App: Snapshot
+        App->>App: Saldo atual ou posição histórica até at
+        App-->>API: Posição do saldo
+        API-->>Cliente: 200 OK
+    end
+```
+
 ## Guia rápido para avaliação
 
 | Tema | Onde conferir |
