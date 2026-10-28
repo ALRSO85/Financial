@@ -5,9 +5,15 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
-  <ItemGroup><ProjectReference Include="..\..\src\Ledger.Api\Ledger.Api.csproj" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Ledger.Application\Ledger.Application.csproj" />
+    <ProjectReference Include="..\..\src\Ledger.Api\Ledger.Api.csproj" />
+    <ProjectReference Include="..\..\src\Ledger.Infrastructure\Ledger.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Ledger.Domain\Ledger.Domain.csproj" />
+  </ItemGroup>
 </Project>
