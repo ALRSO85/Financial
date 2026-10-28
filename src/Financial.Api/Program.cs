@@ -81,12 +81,14 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+    app.UseStaticFiles();
     app.MapGet("/", () => Results.Content("""
         <!doctype html>
         <html lang="pt-BR">
         <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
+            <link rel="icon" href="/favicon.ico" sizes="any">
             <title>Financial API</title>
             <style>
                 body { margin: 0; background: #f4f6f8; color: #17202a; font: 16px system-ui, sans-serif; }

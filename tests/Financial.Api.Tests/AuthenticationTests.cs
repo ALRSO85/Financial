@@ -64,6 +64,9 @@ public sealed class AuthenticationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, homeResponse.StatusCode);
         Assert.Equal("text/html", homeResponse.Content.Headers.ContentType?.MediaType);
         Assert.Contains("href=\"/swagger\"", await homeResponse.Content.ReadAsStringAsync());
+        var faviconResponse = await _client.GetAsync("/favicon.ico");
+        Assert.Equal(HttpStatusCode.OK, faviconResponse.StatusCode);
+        Assert.Equal("image/x-icon", faviconResponse.Content.Headers.ContentType?.MediaType);
 
         using var openApi = JsonDocument.Parse(await _client.GetStringAsync("/swagger/v1/swagger.json"));
         var openApiRoot = openApi.RootElement;
