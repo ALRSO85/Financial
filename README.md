@@ -96,6 +96,17 @@ tests/
 
 O domínio não depende de HTTP ou armazenamento. A aplicação depende do domínio e define `IFinancialRepository`; a infraestrutura implementa essa porta e a API conecta as dependências. A documentação de decisões e limites fica em [`docs/architecture.md`](docs/architecture.md).
 
+## Guia rápido para avaliação
+
+| Tema | Onde conferir |
+| --- | --- |
+| Regras de conta, valores e lançamentos | `src/Financial.Domain/` |
+| Crédito, débito, idempotência e saldos atuais/históricos | `src/Financial.Application/FinancialApplicationService.cs` |
+| Persistência JSON e validação do snapshot | `src/Financial.Infrastructure/JsonFinancialRepository.cs` |
+| JWT, endpoints e Swagger | `src/Financial.Api/` |
+| Testes de regras e contrato HTTP | `tests/Financial.Api.Tests/` |
+| Decisões, limites e evolução para produção | [`docs/architecture.md`](docs/architecture.md) |
+
 ## Decisões de arquitetura
 
 - **Ledger append-only:** cada operação aprovada gera uma entrada de valor assinado e nunca se altera/exclui; correções futuras devem ser novos lançamentos compensatórios e auditáveis.
