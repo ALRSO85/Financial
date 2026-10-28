@@ -60,6 +60,11 @@ public sealed class AuthenticationTests : IAsyncLifetime
     [Fact]
     public async Task Requests_require_valid_bearer_token_and_account_owner()
     {
+        var homeResponse = await _client.GetAsync("/");
+        Assert.Equal(HttpStatusCode.OK, homeResponse.StatusCode);
+        Assert.Equal("text/html", homeResponse.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("href=\"/swagger\"", await homeResponse.Content.ReadAsStringAsync());
+
         using var openApi = JsonDocument.Parse(await _client.GetStringAsync("/swagger/v1/swagger.json"));
         var openApiRoot = openApi.RootElement;
         Assert.True(openApiRoot.GetProperty("components").GetProperty("securitySchemes").TryGetProperty("bearer", out _));

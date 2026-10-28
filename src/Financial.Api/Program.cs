@@ -81,6 +81,32 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+    app.MapGet("/", () => Results.Content("""
+        <!doctype html>
+        <html lang="pt-BR">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Financial API</title>
+            <style>
+                body { margin: 0; background: #f4f6f8; color: #17202a; font: 16px system-ui, sans-serif; }
+                main { box-sizing: border-box; max-width: 680px; margin: 12vh auto; padding: 40px; background: #fff; border-radius: 12px; box-shadow: 0 8px 30px #17202a12; }
+                h1 { margin-top: 0; }
+                a { display: inline-block; margin-top: 12px; padding: 12px 18px; border-radius: 6px; background: #155eef; color: #fff; text-decoration: none; }
+                a:hover { background: #124fc7; }
+                code { color: #344054; }
+            </style>
+        </head>
+        <body>
+            <main>
+                <h1>Financial API</h1>
+                <p>API demonstrativa para registrar créditos e débitos e consultar saldos atuais ou históricos.</p>
+                <a href="/swagger">Abrir documentação Swagger</a>
+                <p>Documento OpenAPI: <code>/swagger/v1/swagger.json</code></p>
+            </main>
+        </body>
+        </html>
+        """, "text/html; charset=utf-8")).ExcludeFromDescription();
 }
 app.UseExceptionHandler();
 app.UseAuthentication();

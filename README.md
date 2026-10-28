@@ -44,7 +44,7 @@ $token = powershell.exe -ExecutionPolicy Bypass -File .\scripts\New-LocalJwt.ps1
 
 No Linux ou macOS, gere o token com `$token = pwsh -File ./scripts/New-LocalJwt.ps1 -Subject "cliente-123"`.
 
-A API escuta em `http://localhost:5080`. No ambiente `Development`, a documentação interativa fica em `/swagger` e o documento OpenAPI em `/swagger/v1/swagger.json`. O botão **Authorize** aceita o bearer token. O caminho do JSON pode ser alterado pela configuração `Financial:FilePath`.
+A API escuta em `http://localhost:5080`. Ao abrir a raiz, a página inicial apresenta um link para o Swagger. No ambiente `Development`, a documentação interativa fica em `/swagger` e o documento OpenAPI em `/swagger/v1/swagger.json`. O botão **Authorize** aceita o bearer token. O caminho do JSON pode ser alterado pela configuração `Financial:FilePath`.
 
 Criar conta:
 
