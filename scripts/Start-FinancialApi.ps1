@@ -1,4 +1,4 @@
-$apiProject = Join-Path $PSScriptRoot "..\src\Financial.Api\Financial.Api.csproj"
+$apiProject = Join-Path $PSScriptRoot "../src/Financial.Api/Financial.Api.csproj"
 if (-not (Test-Path -LiteralPath $apiProject)) {
     throw "Não foi possível localizar o projeto da API: $apiProject"
 }

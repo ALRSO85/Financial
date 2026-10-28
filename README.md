@@ -14,7 +14,7 @@ API demonstrativa em C#/.NET para registrar créditos e débitos e consultar sal
 ## Requisitos
 
 - .NET SDK 10.0.402 (ou patch posterior da linha 10.0)
-- PowerShell para executar o gerador de token local (`.ps1`)
+- PowerShell 7 (`pwsh`) para executar os scripts locais (`.ps1`)
 - Windows, Linux ou macOS
 
 ## Executar localmente
@@ -28,7 +28,7 @@ A API usa o provider `json` por padrão e cria `data/financial.json` no diretór
 No primeiro terminal:
 
 ```powershell
-.\scripts\Start-FinancialApi.ps1
+pwsh -File ./scripts/Start-FinancialApi.ps1
 ```
 
 Em um segundo terminal, gere um token curto com os mesmos valores. O script `.ps1` requer PowerShell; se preferir outro shell, gere um JWT equivalente com o mesmo emissor, audiência, chave e claim `sub`.
@@ -37,7 +37,7 @@ Em um segundo terminal, gere um token curto com os mesmos valores. O script `.ps
 $env:Jwt__Issuer = "financial-local"
 $env:Jwt__Audience = "financial-api"
 $env:Jwt__SigningKey = "local-only-change-this-key-to-a-random-32-byte-value"
-$token = .\scripts\New-LocalJwt.ps1 -Subject "cliente-123"
+$token = pwsh -File ./scripts/New-LocalJwt.ps1 -Subject "cliente-123"
 ```
 
 A API escuta em `http://localhost:5080`. No ambiente `Development`, a documentação interativa fica em `/swagger` e o documento OpenAPI em `/swagger/v1/swagger.json`. O botão **Authorize** aceita o bearer token. O caminho do JSON pode ser alterado pela configuração `Financial:FilePath`.
