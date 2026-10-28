@@ -33,16 +33,13 @@ powershell.exe -ExecutionPolicy Bypass -File .\scripts\Start-FinancialApi.ps1
 
 No Linux ou macOS, use `pwsh -File ./scripts/Start-FinancialApi.ps1`. No Windows, a opção `-ExecutionPolicy Bypass` vale somente para esse processo e não altera a política permanente do sistema.
 
-Em um segundo terminal, gere um token curto com os mesmos valores. O script `.ps1` requer PowerShell; se preferir outro shell, gere um JWT equivalente com o mesmo emissor, audiência, chave e claim `sub`.
+Em um segundo terminal, gere um token curto. O script define os valores JWT locais usados pela API. No Windows:
 
 ```powershell
-$env:Jwt__Issuer = "financial-local"
-$env:Jwt__Audience = "financial-api"
-$env:Jwt__SigningKey = "local-only-change-this-key-to-a-random-32-byte-value"
 $token = powershell.exe -ExecutionPolicy Bypass -File .\scripts\New-LocalJwt.ps1 -Subject "cliente-123"
 ```
 
-No Linux ou macOS, gere o token com `$token = pwsh -File ./scripts/New-LocalJwt.ps1 -Subject "cliente-123"`.
+No Linux ou macOS, use `$token = pwsh -File ./scripts/New-LocalJwt.ps1 -Subject "cliente-123"`. O token vale por cinco minutos.
 
 A API escuta em `http://localhost:5080`. Ao abrir a raiz, a página inicial apresenta um link para o Swagger e um favicon padrão. No ambiente `Development`, a documentação interativa fica em `/swagger` e o documento OpenAPI em `/swagger/v1/swagger.json`. O botão **Authorize** aceita o bearer token. O caminho do JSON pode ser alterado pela configuração `Financial:FilePath`.
 

@@ -2,6 +2,10 @@ param(
     [string]$Subject = "customer-123"
 )
 
+$env:Jwt__Issuer = "financial-local"
+$env:Jwt__Audience = "financial-api"
+$env:Jwt__SigningKey = "local-only-change-this-key-to-a-random-32-byte-value"
+
 $issuer = $env:Jwt__Issuer
 $audience = $env:Jwt__Audience
 $signingKey = $env:Jwt__SigningKey
