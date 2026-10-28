@@ -1,4 +1,4 @@
-namespace Ledger.Domain;
+namespace Financial.Domain;
 
 public readonly record struct Money(long Cents)
 {

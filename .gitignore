@@ -3,7 +3,7 @@
 *.db
 *.db-shm
 *.db-wal
-/data/ledger.json
-/data/ledger.json.tmp
+**/[dD]ata/financial.json
+**/[dD]ata/financial.json.tmp
 .vs/
 .idea/

@@ -1,4 +1,4 @@
-namespace Ledger.Domain;
+namespace Financial.Domain;
 
 public sealed record Account(Guid Id, string OwnerReference, DateTimeOffset CreatedAt, Money Balance)
 {

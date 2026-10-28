@@ -5,10 +5,10 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <PackageReference Include="Swashbuckle.AspNetCore" />
-    <ProjectReference Include="..\Ledger.Application\Ledger.Application.csproj" />
-    <ProjectReference Include="..\Ledger.Infrastructure\Ledger.Infrastructure.csproj" />
+    <ProjectReference Include="..\Financial.Application\Financial.Application.csproj" />
+    <ProjectReference Include="..\Financial.Infrastructure\Financial.Infrastructure.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Ledger.Domain\Ledger.Domain.csproj" />
+    <ProjectReference Include="..\Financial.Domain\Financial.Domain.csproj" />
   </ItemGroup>
 </Project>

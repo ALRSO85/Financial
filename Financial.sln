@@ -1,21 +1,21 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ledger.Api", "src\Ledger.Api\Ledger.Api.csproj", "{AA7B2A44-554C-4B90-8294-7172B7528B44}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Financial.Api", "src\Financial.Api\Financial.Api.csproj", "{AA7B2A44-554C-4B90-8294-7172B7528B44}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05-4346-4AA6-1389-037BE0695223}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ledger.Api.Tests", "tests\Ledger.Api.Tests\Ledger.Api.Tests.csproj", "{1983CA54-ABCF-4F4E-A71B-D98B60C971E8}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Financial.Api.Tests", "tests\Financial.Api.Tests\Financial.Api.Tests.csproj", "{1983CA54-ABCF-4F4E-A71B-D98B60C971E8}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ledger.Domain", "src\Ledger.Domain\Ledger.Domain.csproj", "{E2286ADD-A28B-4FA9-ACE0-D0AF768F547F}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Financial.Domain", "src\Financial.Domain\Financial.Domain.csproj", "{E2286ADD-A28B-4FA9-ACE0-D0AF768F547F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ledger.Application", "src\Ledger.Application\Ledger.Application.csproj", "{9502ED8E-B8ED-4DDA-82EE-08F9D579D561}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Financial.Application", "src\Financial.Application\Financial.Application.csproj", "{9502ED8E-B8ED-4DDA-82EE-08F9D579D561}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ledger.Infrastructure", "src\Ledger.Infrastructure\Ledger.Infrastructure.csproj", "{47E2638E-E0C6-4910-82B9-0044952E6B36}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Financial.Infrastructure", "src\Financial.Infrastructure\Financial.Infrastructure.csproj", "{47E2638E-E0C6-4910-82B9-0044952E6B36}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

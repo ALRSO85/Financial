@@ -12,6 +12,6 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - run: dotnet restore Ledger.sln
-      - run: dotnet build Ledger.sln --no-restore --configuration Release
-      - run: dotnet test Ledger.sln --no-build --configuration Release
+      - run: dotnet restore Financial.sln
+      - run: dotnet build Financial.sln --no-restore --configuration Release
+      - run: dotnet test Financial.sln --no-build --configuration Release

@@ -11,9 +11,9 @@
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Ledger.Application\Ledger.Application.csproj" />
-    <ProjectReference Include="..\..\src\Ledger.Api\Ledger.Api.csproj" />
-    <ProjectReference Include="..\..\src\Ledger.Infrastructure\Ledger.Infrastructure.csproj" />
-    <ProjectReference Include="..\..\src\Ledger.Domain\Ledger.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Financial.Application\Financial.Application.csproj" />
+    <ProjectReference Include="..\..\src\Financial.Api\Financial.Api.csproj" />
+    <ProjectReference Include="..\..\src\Financial.Infrastructure\Financial.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Financial.Domain\Financial.Domain.csproj" />
   </ItemGroup>
 </Project>
