@@ -2,6 +2,15 @@
 
 API demonstrativa em C#/.NET para registrar créditos e débitos e consultar saldo atual ou histórico. O exemplo prioriza lançamento contábil imutável, idempotência e proteção contra saldo negativo.
 
+## Stack
+
+- C# e .NET 10 / ASP.NET Core Minimal APIs
+- Swagger e OpenAPI com Swashbuckle
+- Autenticação JWT Bearer
+- Persistência local em JSON com `System.Text.Json`, isolada pela porta `IFinancialRepository`
+- Testes automatizados com xUnit e `Microsoft.AspNetCore.Mvc.Testing`
+- Integração contínua com GitHub Actions
+
 ## Requisitos
 
 - .NET SDK 10.0.402 (ou patch posterior da linha 10.0)
