@@ -1,0 +1,36 @@
+services:
+  financial-write-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: financial
+      POSTGRES_USER: financial
+      POSTGRES_PASSWORD: financial-local-only
+    ports:
+      - "5432:5432"
+    volumes:
+      - financial-write-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U financial -d financial"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  financial-read-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: financial_read
+      POSTGRES_USER: financial
+      POSTGRES_PASSWORD: financial-local-only
+    ports:
+      - "5433:5432"
+    volumes:
+      - financial-read-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U financial -d financial_read"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  financial-write-data:
+  financial-read-data:

@@ -1,5 +1,6 @@
 param(
-    [string]$Subject = "customer-123"
+    [string]$Subject = "customer-123",
+    [string[]]$Scopes = @("financial.read", "financial.write")
 )
 
 $env:Jwt__Issuer = "financial-local"
@@ -27,6 +28,7 @@ $payloadObject = @{
     iss = $issuer
     aud = $audience
     sub = $Subject
+    scope = ($Scopes -join ' ')
     iat = $now
     nbf = $now
     exp = $now + 300

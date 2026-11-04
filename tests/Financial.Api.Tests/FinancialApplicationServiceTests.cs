@@ -143,6 +143,22 @@ public sealed class FinancialApplicationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Recorded_times_advance_at_postgres_timestamp_precision_when_clock_repeats()
+    {
+        var initialTime = new DateTimeOffset(2026, 10, 28, 12, 0, 0, TimeSpan.Zero).AddTicks(3);
+        var clock = new ManualTimeProvider(initialTime);
+        var service = new FinancialApplicationService(new JsonFinancialRepository(_filePath), clock);
+        var account = await service.CreateAccountAsync("customer-123", default);
+
+        var first = await service.PostAsync(account.Id, "customer-123", new("credit", 100, "same-time-1", null), default);
+        var second = await service.PostAsync(account.Id, "customer-123", new("credit", 100, "same-time-2", null), default);
+
+        Assert.Equal(10, (second.Transaction.OccurredAt - first.Transaction.OccurredAt).Ticks);
+        Assert.Equal(0, first.Transaction.OccurredAt.UtcDateTime.Ticks % 10);
+        Assert.Equal(0, second.Transaction.OccurredAt.UtcDateTime.Ticks % 10);
+    }
+
+    [Fact]
     public async Task State_survives_service_restart()
     {
         var account = await _service.CreateAccountAsync("customer-123", default);

@@ -7,7 +7,10 @@ API demonstrativa em C#/.NET para registrar créditos e débitos e consultar sal
 - C# e .NET 10 / ASP.NET Core Minimal APIs
 - Swagger e OpenAPI com Swashbuckle
 - Autenticação JWT Bearer
-- Persistência local em JSON com `System.Text.Json`, isolada pela porta `IFinancialRepository`
+- Persistência transacional em PostgreSQL com Npgsql; JSON permanece disponível somente para testes isolados
+- Outbox transacional e projeção de leitura idempotente
+- Health checks e telemetria OpenTelemetry/OTLP
+- Escopos JWT, rate limiting e limites de requisição
 - Testes automatizados com xUnit e `Microsoft.AspNetCore.Mvc.Testing`
 - Integração contínua com GitHub Actions
 
@@ -15,6 +18,7 @@ API demonstrativa em C#/.NET para registrar créditos e débitos e consultar sal
 
 - .NET SDK 10.0.402 (ou patch posterior da linha 10.0)
 - PowerShell no Windows (`powershell.exe`) ou PowerShell 7 no Linux/macOS (`pwsh`), para executar os scripts locais (`.ps1`)
+- Docker Desktop ou Docker Engine com Compose, para os bancos PostgreSQL locais e testes de integração
 - Windows, Linux ou macOS
 
 ## Executar localmente
@@ -23,7 +27,13 @@ API demonstrativa em C#/.NET para registrar créditos e débitos e consultar sal
 dotnet restore
 ```
 
-A API usa o provider `json` por padrão e cria `data/financial.json` no diretório do projeto. O caminho pode ser alterado por `Financial:FilePath`; `Financial:StorageProvider` permite selecionar o provider registrado. Neste protótipo, somente `json` está disponível. No PowerShell, inicie-a pelo script, que configura valores JWT temporários apenas para desenvolvimento:
+A solução executa uma API de escrita, uma API de leitura e um projetor de eventos. Os dois bancos PostgreSQL locais são independentes. Suba-os antes dos serviços:
+
+```powershell
+docker compose up -d financial-write-db financial-read-db
+```
+
+O schema inicial é aplicado no início da API; as migrations ficam em `src/Financial.Infrastructure/Migrations`. O adapter JSON permanece disponível somente para testes e isolamento local. No PowerShell, inicie a API pelo script, que configura valores JWT temporários e a conexão local apenas para desenvolvimento:
 
 No primeiro terminal:
 
@@ -31,7 +41,7 @@ No primeiro terminal:
 powershell.exe -ExecutionPolicy Bypass -File .\scripts\Start-FinancialApi.ps1
 ```
 
-No Linux ou macOS, use `pwsh -File ./scripts/Start-FinancialApi.ps1`. No Windows, a opção `-ExecutionPolicy Bypass` vale somente para esse processo e não altera a política permanente do sistema.
+No Linux ou macOS, use `pwsh -File ./scripts/Start-FinancialApi.ps1`. No Windows, a opção `-ExecutionPolicy Bypass` vale somente para esse processo e não altera a política permanente do sistema. A API de escrita usa `http://localhost:5080`.
 
 Em um segundo terminal, gere um token curto. O script define os valores JWT locais usados pela API. No Windows:
 
@@ -39,9 +49,16 @@ Em um segundo terminal, gere um token curto. O script define os valores JWT loca
 $token = powershell.exe -ExecutionPolicy Bypass -File .\scripts\New-LocalJwt.ps1 -Subject "cliente-123"
 ```
 
-No Linux ou macOS, use `$token = pwsh -File ./scripts/New-LocalJwt.ps1 -Subject "cliente-123"`. O token vale por cinco minutos.
+No Linux ou macOS, use `$token = pwsh -File ./scripts/New-LocalJwt.ps1 -Subject "cliente-123"`. O token vale por cinco minutos e inclui os escopos locais de leitura e escrita.
 
-A API escuta em `http://localhost:5080`. Ao abrir a raiz, a página inicial apresenta um link para o Swagger e um favicon padrão. No ambiente `Development`, a documentação interativa fica em `/swagger` e o documento OpenAPI em `/swagger/v1/swagger.json`. O botão **Authorize** aceita o bearer token. O caminho do JSON pode ser alterado pela configuração `Financial:FilePath`.
+Em terminais separados, inicie também a API de leitura e o projetor:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\Start-FinancialReadApi.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\Start-FinancialProjector.ps1
+```
+
+A API de leitura escuta em `http://localhost:5081`. Cada API tem Swagger em `/swagger`; a de escrita recebe `POST`, e a de leitura atende `GET`. A projeção é eventualmente consistente. As respostas de saldo incluem `dataAsOf`, o instante mais recente aplicado; aguarde o projetor após registrar a primeira conta ou lançamento. O token local de desenvolvimento é previsível e não deve ser reutilizado fora desse ambiente.
 
 Criar conta:
 
@@ -52,7 +69,7 @@ curl.exe -X POST http://localhost:5080/accounts -H "Authorization: Bearer $token
 O `201 Created` retorna a URL da conta, disponível somente para o titular:
 
 ```powershell
-curl.exe -H "Authorization: Bearer $token" http://localhost:5080/accounts/{accountId}
+curl.exe -H "Authorization: Bearer $token" http://localhost:5081/accounts/{accountId}
 ```
 
 Registrar crédito ou débito (valores inteiros em centavos):
@@ -66,31 +83,42 @@ Substitua `{accountId}` pelo identificador retornado na criação da conta.
 O `201 Created` retorna a URL do lançamento criado. Ela pode ser consultada pelo mesmo titular:
 
 ```powershell
-curl.exe -H "Authorization: Bearer $token" http://localhost:5080/accounts/{accountId}/transactions/{transactionId}
+curl.exe -H "Authorization: Bearer $token" http://localhost:5081/accounts/{accountId}/transactions/{transactionId}
 ```
 
 Consultar saldo atual ou posição até uma data/hora no padrão brasileiro:
 
 ```powershell
-curl.exe -H "Authorization: Bearer $token" http://localhost:5080/accounts/{accountId}/balance
-curl.exe -G --data-urlencode "at=28/10/2026 09:00:00 -03:00" -H "Authorization: Bearer $token" http://localhost:5080/accounts/{accountId}/balance
-curl.exe -H "Authorization: Bearer $token" http://localhost:5080/customers/me/balance
-curl.exe -G --data-urlencode "at=28/10/2026 09:00:00 -03:00" -H "Authorization: Bearer $token" http://localhost:5080/customers/me/balance
+curl.exe -H "Authorization: Bearer $token" http://localhost:5081/accounts/{accountId}/balance
+curl.exe -G --data-urlencode "at=28/10/2026 09:00:00 -03:00" -H "Authorization: Bearer $token" http://localhost:5081/accounts/{accountId}/balance
+curl.exe -H "Authorization: Bearer $token" http://localhost:5081/customers/me/balance
+curl.exe -G --data-urlencode "at=28/10/2026 09:00:00 -03:00" -H "Authorization: Bearer $token" http://localhost:5081/customers/me/balance
 ```
 
 O parâmetro `at` usa `dd/MM/yyyy HH:mm:ss zzz`, com fuso explícito. O exemplo representa o horário de Brasília (`-03:00`).
 
-A conta é criada com o `sub` do token; somente tokens com o mesmo `sub` podem consultar ou movimentar essa conta. A API valida assinatura, emissor, audiência e validade do token. Ela não emite tokens nem autentica credenciais de usuário: em produção, configure `Jwt:Authority`, `Jwt:Issuer` e `Jwt:Audience` para um provedor de identidade confiável e remova `Jwt:SigningKey`. Os modos `Authority` e `SigningKey` são mutuamente exclusivos. O script local usa uma chave simétrica apenas para testar; mantenha a chave fora do repositório e não a reutilize em produção.
+A conta é criada com o `sub` do token; somente tokens com o mesmo `sub` podem consultar ou movimentar essa conta. As APIs validam assinatura, emissor, audiência, validade e escopo (`financial.read` ou `financial.write`). Elas não emitem tokens nem autenticam credenciais de usuário. Fora de `Development`, configure `Jwt:Authority`, `Jwt:Issuer` e `Jwt:Audience` para um provedor confiável; a chave simétrica local é recusada. A conexão PostgreSQL de produção deve usar TLS com validação do certificado (`SslMode=VerifyFull`) e segredos injetados por um gerenciador seguro.
 
 Os comandos HTTP acima usam `curl.exe` no Windows. Em Linux ou macOS, use `curl` no lugar; para executar os scripts `.ps1`, instale PowerShell 7 (`pwsh`).
 
 ## Testes
 
+Os testes unitários usam JSON temporário. Os testes de concorrência e projeção precisam de PostgreSQL. Suba os dois bancos primeiro:
+
 ```bash
+docker compose up -d financial-write-db financial-read-db
+```
+
+No PowerShell:
+
+```powershell
+$env:FinancialTests__PostgresConnectionString = "Host=localhost;Port=5432;Database=financial;Username=financial;Password=financial-local-only"
 dotnet test
 ```
 
-Os testes cobrem autenticação JWT, isolamento e preservação exata da referência do titular, validação do fuso em consultas históricas, criação e consulta de contas e lançamentos, crédito/débito, saldo insuficiente, idempotência sequencial e concorrente, consolidação entre contas, persistência após reiniciar o serviço, relógio regressivo e falha fechada diante de JSON corrompido ou ledger inconsistente. Cada teste usa seu próprio arquivo temporário.
+No Linux/macOS, exporte a mesma variável antes de executar `dotnet test`. O CI inicia um PostgreSQL efêmero e executa também esses testes.
+
+Os testes JSON cobrem regras de domínio, autenticação e contratos HTTP; os testes PostgreSQL exercitam concorrência entre conexões, idempotência, atomicidade da outbox e reprocessamento da projeção. Os testes de integração criam schemas isolados e removem esses schemas ao final.
 
 ## Organização do código
 
@@ -98,56 +126,58 @@ Os testes cobrem autenticação JWT, isolamento e preservação exata da referê
 src/
   Financial.Domain/         agregado Account, Money e FinancialEntry
   Financial.Application/    casos de uso, contratos e porta do repositório
-  Financial.Infrastructure/ adapter de persistência JSON
-  Financial.Api/            endpoints HTTP, composição e Swagger
+  Financial.Infrastructure/ adapters PostgreSQL e JSON de teste, migrations e projetor
+  Financial.DatabaseMigrator/ executável para aplicar migrations como etapa controlada
+  Financial.Api/            modos de escrita/leitura, JWT, Swagger e health checks
+  Financial.Projector.Worker/ consumidor da outbox e projeção de leitura
 tests/
   Financial.Api.Tests/      testes automatizados dos casos de uso
 ```
 
-O domínio não depende de HTTP ou armazenamento. A aplicação depende do domínio e define `IFinancialRepository`; a infraestrutura implementa essa porta e a API conecta as dependências. A documentação de decisões e limites fica em [`docs/architecture.md`](docs/architecture.md).
+O domínio não depende de HTTP ou armazenamento. A aplicação depende do domínio e define portas de escrita e leitura; a infraestrutura as implementa, e a API conecta as dependências. As premissas da revisão ficam em [`docs/requirements-and-decisions.md`](docs/requirements-and-decisions.md), as decisões em [`docs/architecture.md`](docs/architecture.md) e os procedimentos em [`docs/runbook.md`](docs/runbook.md).
 
 ## Fluxo principal
 
 ```mermaid
 sequenceDiagram
     actor Cliente
-    participant API as Financial.Api
+    participant Write as Financial.Api (write)
     participant App as Financial.Application
     participant Domain as Financial.Domain
-    participant Repo as IFinancialRepository
-    participant JSON as financial.json
+    participant WriteDB as PostgreSQL write
+    participant Worker as Financial.Projector.Worker
+    participant ReadDB as PostgreSQL read
+    participant Read as Financial.Api (read)
 
     rect rgb(240, 248, 255)
-        Note over Cliente,JSON: Registro de crédito ou débito
-        Cliente->>API: POST /accounts/{id}/transactions com JWT
-        API->>API: Valida token e obtém sub
-        API->>App: PostAsync(conta, titular, lançamento)
-        App->>Repo: LoadAsync()
-        Repo->>JSON: Lê snapshot
-        JSON-->>Repo: Contas e lançamentos
-        Repo-->>App: Snapshot
+        Note over Cliente,WriteDB: Registro de crédito ou débito
+        Cliente->>Write: POST /accounts/{id}/transactions com JWT e escopo financial.write
+        Write->>Write: Valida JWT, escopo e titular
+        Write->>App: PostAsync(conta, titular, lançamento)
+        App->>WriteDB: Abre transação e bloqueia a linha da conta
         App->>Domain: Account.Apply(tipo, valor)
         Domain-->>App: Conta com saldo atualizado
-        App->>Repo: SaveAsync(snapshot atualizado)
-        Repo->>JSON: Escreve temporário e substitui arquivo
-        JSON-->>Repo: Gravação concluída
-        Repo-->>App: Confirmação
-        App-->>API: Lançamento novo ou idempotente
-        API-->>Cliente: 201 novo / 200 repetição idempotente
+        App->>WriteDB: Grava saldo, lançamento, auditoria e evento outbox
+        WriteDB-->>App: Commit atômico
+        App-->>Write: Lançamento novo ou idempotente
+        Write-->>Cliente: 201 novo / 200 repetição idempotente
     end
 
     rect rgb(245, 250, 240)
-        Note over Cliente,JSON: Consulta de saldo
-        Cliente->>API: GET /accounts/{id}/balance ou /customers/me/balance com JWT e at opcional
-        API->>API: Valida token e obtém sub
-        API->>App: GetBalanceAsync ou GetCustomerBalanceAsync(conta, titular, at)
-        App->>Repo: LoadAsync()
-        Repo->>JSON: Lê snapshot
-        JSON-->>Repo: Contas e lançamentos
-        Repo-->>App: Snapshot
-        App->>App: Saldo atual ou posição histórica até at
-        App-->>API: Posição do saldo
-        API-->>Cliente: 200 OK
+        Note over WriteDB,ReadDB: Projeção eventual e idempotente
+        Worker->>WriteDB: Lê eventos pendentes da outbox
+        Worker->>ReadDB: Aplica evento e checkpoint em transação
+        ReadDB-->>Worker: Commit da projeção
+        Worker->>WriteDB: Marca evento processado
+    end
+
+    rect rgb(240, 248, 255)
+        Note over Cliente,ReadDB: Consulta continua independente da API de escrita
+        Cliente->>Read: GET /customers/me/balance com JWT e escopo financial.read
+        Read->>Read: Valida JWT, escopo e titular
+        Read->>ReadDB: Consulta saldo projetado e auditoria de acesso
+        ReadDB-->>Read: Saldo e dataAsOf
+        Read-->>Cliente: 200 OK com instante aplicado à projeção
     end
 ```
 
@@ -157,29 +187,33 @@ sequenceDiagram
 | --- | --- |
 | Regras de conta, valores e lançamentos | `src/Financial.Domain/` |
 | Crédito, débito, idempotência e saldos atuais/históricos | `src/Financial.Application/FinancialApplicationService.cs` |
-| Persistência JSON e validação do snapshot | `src/Financial.Infrastructure/JsonFinancialRepository.cs` |
-| JWT, endpoints e Swagger | `src/Financial.Api/` |
+| Transação PostgreSQL, bloqueio da conta e outbox | `src/Financial.Infrastructure/PostgresFinancialRepository.cs` |
+| Projeção eventual e consultas independentes | `src/Financial.Infrastructure/PostgresOutboxProjector.cs`, `src/Financial.Infrastructure/PostgresFinancialReadRepository.cs` |
+| JWT, escopos, endpoints, Swagger e health checks | `src/Financial.Api/` |
 | Testes de regras e contrato HTTP | `tests/Financial.Api.Tests/` |
-| Decisões, limites e evolução para produção | [`docs/architecture.md`](docs/architecture.md) |
+| Premissas e metas operacionais | [`docs/requirements-and-decisions.md`](docs/requirements-and-decisions.md) |
+| Operação, recuperação e troubleshooting | [`docs/runbook.md`](docs/runbook.md) |
+| Decisões e limites | [`docs/architecture.md`](docs/architecture.md) |
 
 ## Decisões de arquitetura
 
 - **Ledger append-only:** cada operação aprovada gera uma entrada de valor assinado e nunca se altera/exclui; correções futuras devem ser novos lançamentos compensatórios e auditáveis.
 - **Centavos inteiros:** evita arredondamento binário de ponto flutuante. `long` tem limite finito, validado por aritmética checked.
-- **Moeda assumida:** os valores em centavos representam reais (BRL). O protótipo não aceita outras moedas nem faz conversão cambial.
-- **Persistência local:** JSON foi escolhido para deixar o exercício autocontido, sem exigir a instalação de um servidor ou pacote de banco, e para facilitar inspeção e isolamento dos testes. As gravações são serializadas dentro do processo, escritas em arquivo temporário e depois substituídas no mesmo diretório.
-- **Saldo materializado:** o saldo atual está no agregado `Account`; como a persistência JSON carrega o arquivo inteiro, a leitura e escrita crescem com o ledger. Um banco relacional permitirá consultas indexadas e snapshots históricos se o volume justificar.
-- **Concorrência neste protótipo:** um `SemaphoreSlim` global serializa todas as chamadas na instância, inclusive consultas. Isso simplifica a proteção do arquivo JSON, mas limita a capacidade sob concorrência. Débitos não podem produzir saldo negativo.
+- **Moeda assumida:** os valores em centavos representam reais (BRL). O modelo não converte moedas.
+- **Persistência transacional:** PostgreSQL registra conta, saldo, lançamento, auditoria e outbox. A linha da conta fica bloqueada durante a validação do débito; constraints no banco protegem a idempotência entre instâncias.
+- **Leitura separada:** a API de consulta usa outro banco e não precisa conectar ao serviço nem ao banco de escrita. `dataAsOf` mostra a atualidade da projeção, cuja consistência é eventual.
+- **Outbox:** o evento é inserido na mesma transação financeira. O projetor aplica-o idempotentemente; se parar, a leitura mantém a última projeção e o backlog pode ser recuperado após reiniciar.
+- **JSON:** permanece apenas como adapter de apoio a testes locais; não é o armazenamento padrão da aplicação.
 - **Idempotência:** chave única por conta; repetição com os mesmos campos devolve o lançamento original, e conteúdo diferente na mesma chave retorna 409.
-- **DDD e Clean Architecture proporcionais:** `Account` protege regras do agregado; `Money` encapsula centavos; `FinancialEntry` é imutável. Casos de uso dependem da porta `IFinancialRepository`, e JSON fica no adapter de infraestrutura. A seleção e o registro do provider ficam em `FinancialPersistenceRegistration`; um adapter relacional futuro pode implementar a mesma porta sem alterar os casos de uso ou o domínio. Não há mensageria ou serviços distribuídos sem necessidade demonstrada.
+- **DDD e Clean Architecture proporcionais:** `Account` protege regras do agregado; `Money` encapsula centavos; `FinancialEntry` é imutável. A aplicação define portas, e os adapters PostgreSQL ficam na infraestrutura. A API opera nos modos `write` e `read`; `combined` é restrito a testes e desenvolvimento.
 
 ## Limites e evolução para produção
 
-O arquivo JSON foi escolhido para manter o exercício simples e autocontido; não é recomendação para um banco digital. A gravação em arquivo inteiro tem custo crescente com o tamanho do ledger. O bloqueio não coordena processos ou instâncias diferentes, e a substituição de arquivo não oferece as garantias de transação, recuperação e durabilidade de um banco relacional. Para múltiplas instâncias, usaria PostgreSQL ou SQL Server gerenciado, migrations versionadas, isolamento/locks de linha ou atualização condicional atômica, backups testados e monitoramento. Garantiria unicidade idempotente no banco, retentativas limitadas com backoff apenas para falhas transitórias, timeout e circuit breaker nas dependências externas. Não retornaria sucesso antes do commit.
+Esta revisão substitui o ledger JSON por PostgreSQL, inclui migrations versionadas e proteção concorrente no banco. O `docker-compose.yml` é um ambiente local com dois bancos individuais; não provisiona replicação, failover, backups externos ou alta disponibilidade. Essas garantias exigem uma plataforma gerenciada, topologia de implantação e exercícios de recuperação. As metas de SLA, carga, latência, RTO e RPO em `requirements-and-decisions.md` são premissas de avaliação, ainda não medidas nem aprovadas pelo negócio.
 
 O saldo consolidado aqui significa saldo contábil resultante de lançamentos ordenados por `OccurredAt` (UTC). Requisitos de data-valor, lançamentos retroativos, ordenação total, estornos, limites/regulação e saldo disponível versus contábil precisam ser definidos pelo produto. Para histórico com alta taxa de consulta, snapshots devem ser reconstruíveis e conciliados com o ledger.
 
-Antes de exposição externa, acrescentaria TLS, gestão segura de chaves, criptografia e política de retenção, auditoria de acesso, rate limiting, limites de payload, métricas/traces/logs sem dados sensíveis, health checks, migrations no deploy, backup/restore e reconciliação operacional. A API usa `sub` como referência opaca do titular; não coloque CPF ou outros dados pessoais nesse claim.
+As APIs exigem escopos distintos, limitam taxa e tamanho de payload e recusam chave JWT simétrica fora de `Development`. Movimentações e consultas geram auditoria estruturada; logs e métricas não registram valores nem identificadores de clientes. Traces, métricas OTLP e health checks podem ser enviados ao backend configurado pelo ambiente. TLS e criptografia em repouso dependem da plataforma de banco e da terminação HTTPS; o ambiente local não simula essas proteções. Carga, failover real e restauração ainda precisam ser exercitados com as metas definidas.
 
 ## Contrato resumido
 

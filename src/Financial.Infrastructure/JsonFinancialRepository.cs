@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Collections.Concurrent;
 using Financial.Application;
 using Financial.Domain;
 
@@ -7,6 +8,8 @@ namespace Financial.Infrastructure;
 public sealed class JsonFinancialRepository(string filePath) : IFinancialRepository
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> FileLocks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim _fileLock = FileLocks.GetOrAdd(Path.GetFullPath(filePath), _ => new SemaphoreSlim(1, 1));
 
     public async Task<FinancialSnapshot> LoadAsync(CancellationToken cancellationToken)
     {
@@ -19,7 +22,7 @@ public sealed class JsonFinancialRepository(string filePath) : IFinancialReposit
         return snapshot;
     }
 
-    public async Task SaveAsync(FinancialSnapshot snapshot, CancellationToken cancellationToken)
+    private async Task SaveAsync(FinancialSnapshot snapshot, CancellationToken cancellationToken)
     {
         ValidateSnapshot(snapshot);
         var directory = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
@@ -39,6 +42,77 @@ public sealed class JsonFinancialRepository(string filePath) : IFinancialReposit
         finally
         {
             if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+        }
+    }
+
+    public async Task<TResult> ExecuteWriteAsync<TResult>(
+        Func<IFinancialWriteSession, CancellationToken, Task<TResult>> operation,
+        CancellationToken cancellationToken)
+    {
+        await _fileLock.WaitAsync(cancellationToken);
+        try
+        {
+            var snapshot = await LoadAsync(cancellationToken);
+            var session = new JsonWriteSession(snapshot);
+            var result = await operation(session, cancellationToken);
+            await SaveAsync(snapshot, cancellationToken);
+            return result;
+        }
+        finally
+        {
+            _fileLock.Release();
+        }
+    }
+
+    private sealed class JsonWriteSession(FinancialSnapshot snapshot) : IFinancialWriteSession
+    {
+        public Task AddAccountAsync(Account account, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            snapshot.Accounts.Add(account);
+            return Task.CompletedTask;
+        }
+
+        public Task<Account?> GetAccountForUpdateAsync(Guid accountId, string ownerReference, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(snapshot.Accounts.SingleOrDefault(x => x.Id == accountId && x.OwnerReference == ownerReference));
+        }
+
+        public Task<FinancialEntry?> FindByIdempotencyKeyAsync(Guid accountId, string idempotencyKey, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(snapshot.Entries.SingleOrDefault(x => x.AccountId == accountId && x.IdempotencyKey == idempotencyKey));
+        }
+
+        public Task<DateTimeOffset> GetLastRecordedAtAsync(Guid accountId, DateTimeOffset createdAt, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var lastRecordedAt = snapshot.Entries.Where(x => x.AccountId == accountId)
+                .Select(x => x.OccurredAt).DefaultIfEmpty(createdAt).Max();
+            return Task.FromResult(lastRecordedAt);
+        }
+
+        public Task UpdateAccountAsync(Account account, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var index = snapshot.Accounts.FindIndex(x => x.Id == account.Id);
+            if (index < 0) throw new InvalidOperationException("A conta a atualizar não existe no snapshot.");
+            snapshot.Accounts[index] = account;
+            return Task.CompletedTask;
+        }
+
+        public Task AddEntryAsync(FinancialEntry entry, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            snapshot.Entries.Add(entry);
+            return Task.CompletedTask;
+        }
+
+        public Task RecordAuditAsync(string action, Guid accountId, Guid? transactionId, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
         }
     }
 

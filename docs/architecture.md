@@ -1,77 +1,81 @@
-# Arquitetura e garantias
+# Arquitetura da revisão
 
-## Limites da solução
+As premissas funcionais, decisões de domínio e metas provisórias estão em [`requirements-and-decisions.md`](requirements-and-decisions.md). Esta documentação descreve o desenho implementado e distingue o ambiente demonstrativo das garantias que exigem infraestrutura gerenciada.
 
-A solução registra créditos e débitos em uma conta e consulta saldo atual ou histórico. Não movimenta valores entre contas nem integra com sistemas de pagamento.
+## Componentes
 
 ```text
-Financial.Api ────────────────┐
-  rotas HTTP e Swagger     │
-                           ▼
-Financial.Infrastructure ──► Financial.Application ──► Financial.Domain
-  JSON repository          casos de uso             regras e modelo
+Cliente ──JWT──► Financial.Api (write) ──► PostgreSQL de escrita
+                         │                     ├── ledger/contas
+                         │                     ├── auditoria
+                         │                     └── outbox transacional
+                         │                              │
+                         │                    Financial.Projector.Worker
+                         │                              │
+Cliente ──JWT──► Financial.Api (read) ◄── PostgreSQL de leitura/projeção
 ```
 
-As dependências apontam para dentro: o domínio não conhece HTTP, JSON ou frameworks; a aplicação depende do domínio e define a porta `IFinancialRepository`; a infraestrutura implementa essa porta; a API monta o grafo e converte HTTP para casos de uso.
+O mesmo projeto `Financial.Api` pode iniciar nos modos `write` ou `read`, configurados por `Financial:ApiRole`, e ser executado como processos e implantações separados. O modo `combined` existe apenas para testes e desenvolvimento. O projetor é um processo independente. Os bancos de leitura e escrita usam conexões e schemas próprios.
 
-## DDD aplicado
+O domínio contém `Account`, `Money` e `FinancialEntry`. A aplicação define as portas de escrita e consulta. `Financial.Infrastructure` implementa PostgreSQL, migrations, outbox, projeção e um adapter JSON restrito a testes. A API faz autenticação, autorização e tradução HTTP; o worker aplica eventos à projeção.
 
-- **`Account` é o agregado raiz:** controla a alteração do saldo e rejeita débitos que o deixariam negativo. A aplicação atualiza o agregado e persiste a movimentação como uma única operação lógica.
-- **`Money` é um value object:** representa valores em centavos inteiros e centraliza a soma com detecção de overflow.
-- **`FinancialEntry` é um registro imutável:** documenta o movimento e guarda valor e valor assinado. Correções devem ser novos lançamentos compensatórios.
-- **`FinancialApplicationService` coordena casos de uso:** valida a entrada, aplica idempotência, carrega o agregado, pede a mudança ao domínio e persiste o estado.
-- **`IFinancialRepository` é uma porta da aplicação:** o armazenamento atual usa JSON, mas pode ser trocado por um adapter de banco sem levar detalhes de persistência para as regras de domínio.
+## Escrita atômica e concorrência
 
-O desenho usa poucos conceitos para manter o exercício legível. Não adiciona eventos de domínio, barramento, CQRS ou uma hierarquia extensa de repositórios, pois o escopo não precisa deles.
+Uma gravação executa estas etapas dentro de uma transação PostgreSQL:
 
-A consulta `GET /customers/me/balance` consolida todas as contas associadas ao `sub` autenticado e aceita o mesmo corte histórico da consulta por conta. O modelo não armazena um código de moeda; para este desafio, assume que todas as contas são em reais (BRL). Em um domínio com múltiplas moedas, a moeda faria parte do modelo e a consolidação seria apresentada por moeda, sem somar valores diferentes sem uma regra de conversão explícita.
+1. Bloqueia a linha da conta com `SELECT ... FOR UPDATE`.
+2. Confere titular, chave idempotente, fundos e overflow.
+3. Atualiza saldo, insere lançamento, evento de auditoria e evento da outbox.
+4. Confirma tudo junto. Uma falha em qualquer etapa reverte todas as alterações.
 
-## Fluxo de lançamento
+A constraint única `(account_id, idempotency_key)` é a última barreira contra duplicação e funciona entre processos. O lock por conta serializa débitos concorrentes para a mesma conta sem bloquear movimentações em contas diferentes. A aplicação não confirma sucesso antes do commit.
 
-1. A API valida o formato da requisição e chama o caso de uso.
-2. A aplicação valida campos e procura a chave idempotente na conta. Uma repetição equivalente devolve o resultado anterior; mesma chave com conteúdo diferente retorna 409.
-3. O agregado `Account` aplica o crédito/débito, valida valor positivo, saldo suficiente e overflow.
-4. A aplicação adiciona um `FinancialEntry` imutável e salva o snapshot atualizado.
-5. A infraestrutura escreve JSON em arquivo temporário e o move sobre o arquivo ativo.
+O consumidor pode receber/reprocessar o mesmo evento. `financial_projected_events` torna a aplicação idempotente; lançamento e marcador do evento são confirmados juntos no banco de leitura. Depois, o worker marca a outbox como processada no banco de escrita. Se cair entre esses commits, o evento é repetido e ignorado com segurança. Um advisory lock limita o projetor a uma execução ativa por banco de escrita.
 
-Um `SemaphoreSlim` global na aplicação serializa todas as chamadas na instância, inclusive consultas. Isso protege o acesso ao snapshot JSON e a sequência leitura-modificação-gravação enquanto há uma única instância, mas impede leituras concorrentes e limita a capacidade. Esse limite é intencional no protótipo; para produção, o armazenamento e a estratégia de concorrência precisam ser substituídos por operações transacionais e controle por conta no banco.
+## Leitura e consistência
 
-## Consultas e persistência
+A API de leitura consulta apenas o banco projetado, que mantém contas, saldos atuais, movimentos históricos, auditoria de consulta e estado do projetor. A consulta do saldo atual usa o saldo materializado; a consulta histórica soma lançamentos indexados até `at`. O consolidado é calculado por titular e moeda assumida.
 
-O saldo atual está materializado no agregado, mas como cada chamada carrega e desserializa o arquivo completo, a leitura atual também cresce com o tamanho do JSON. O saldo histórico soma entradas até `OccurredAt` em memória. Os instantes são serializados em ISO-8601 e mantidos monotônicos por conta: se o relógio recuar ou repetir um instante, o próximo lançamento avança um tick após o último registrado. O `AsOf` do saldo atual não fica antes do último movimento. `OccurredAt` é o horário de registro ordenado, não uma eventual data-valor do negócio. Em produção, essa ordenação deve vir de sequência/commit do banco, com relógio sincronizado para auditoria.
+A consistência entre escrita e leitura é eventual. `dataAsOf` informa o instante mais recente aplicado à conta/projeção. O cliente deve tratar esse campo como atualidade da resposta e pode repetir a consulta após uma gravação. Com o projetor parado, a API de leitura continua atendendo a última projeção. O estado de health informa heartbeat, backlog e idade do evento pendente.
 
-O parâmetro histórico `at` usa o padrão brasileiro `dd/MM/yyyy HH:mm:ss zzz` e exige o fuso. Exemplo no horário de Brasília: `28/10/2026 09:00:00 -03:00`. As respostas JSON seguem ISO 8601; a aplicação compara os instantes e persiste `OccurredAt` em UTC.
+O alvo proposto é aplicar eventos em até 60 segundos em condições normais e sinalizar degradação quando o evento pendente mais antigo passar de 5 minutos. Esses valores são premissas de avaliação; não foram medidos em carga e precisam de validação pelo negócio.
 
-O armazenamento JSON foi escolhido porque o objetivo desta entrega é validar o desenho e os casos de uso sem exigir a instalação de um servidor ou introduzir um provider de banco. O arquivo é legível, fácil de inspecionar e os testes podem criar um arquivo isolado por execução. SQLite também seria uma opção local válida se o exercício priorizasse transações relacionais; ainda assim, adicionaria provider e comportamento específico de banco, e continuaria sendo uma base em arquivo adequada a uma única instância, não uma solução de alta disponibilidade.
+## Persistência e migrations
 
-Essa escolha é deliberadamente limitada ao protótipo: o arquivo completo é regravado em cada alteração; o bloqueio não coordena processos diferentes; não há índices nem transação de banco. O arquivo temporário reduz o risco de truncamento, mas não fornece as garantias de durabilidade e recuperação de uma base transacional.
+`001_InitialSchema.sql` cria ledger e outbox, `002_ReadProjection.sql` cria a projeção, e `003_AuditAndDeadLetters.sql` adiciona auditoria financeira e dead letters. `PostgresMigrationRunner` registra versões e usa advisory lock para impedir aplicação simultânea. Em `Development`, cada API aplica as migrations do respectivo banco ao iniciar. Em produção, migrations devem rodar como etapa controlada do deploy, antes de liberar a nova versão; as APIs não alteram schema automaticamente.
 
-O ponto de troca do armazenamento é a porta `IFinancialRepository`, definida em `Financial.Application`. `JsonFinancialRepository` é o adapter atual; a composição de dependências em `FinancialPersistenceRegistration` seleciona o provider configurado por `Financial:StorageProvider` (por padrão, `json`) e falha na inicialização para providers ainda não implementados. Para usar PostgreSQL ou SQL Server, seria necessário adicionar um adapter que implemente a mesma interface, criar migrations e restrições de unicidade para idempotência, e registrar esse adapter nesse ponto. Os casos de uso e o domínio não precisariam conhecer o provider. A implementação de banco deve persistir saldo e lançamento na mesma transação e proteger atualizações concorrentes com lock de linha ou atualização condicional.
+As migrations são aditivas e versionadas. Rollback de aplicação não apaga dados nem executa uma migration destrutiva reversa. A reversão de schema exige procedimento próprio após avaliação de compatibilidade.
 
-O repositório valida as coleções, IDs únicos, chaves idempotentes por conta, valores assinados, ordem temporal, saldo não negativo e reconciliação entre saldos materializados e lançamentos ao carregar e salvar. Se o arquivo não puder ser desserializado ou violar essas invariantes, a operação falha sem substituí-lo por um estado vazio. A recuperação deve preservar o original para análise; o protótipo não tenta reparar registros financeiros automaticamente.
+## Falhas e recuperação
 
-## Swagger e contrato HTTP
-
-Todas as rotas de conta exigem JWT Bearer. A API valida assinatura, emissor, audiência e expiração. O `sub` do token identifica o titular: a criação associa a conta a esse sujeito e leituras/movimentações de outra pessoa retornam 404 para evitar revelar a existência da conta. O serviço não emite tokens; a autenticação de usuários e a emissão pertencem ao provedor de identidade.
-
-O `sub` é tratado como referência opaca e preservado exatamente como emitido; a API não remove espaços nem aplica conversões de caixa, pois isso poderia vincular a conta a uma identidade diferente.
-
-Para execução local, a API aceita uma chave simétrica e restringe o algoritmo a HS256. No ambiente com provedor de identidade, deve-se configurar `Jwt:Authority` e retirar `Jwt:SigningKey`; os dois modos são mutuamente exclusivos para evitar uma configuração que rejeite os tokens emitidos pelo provedor.
-
-Erros de validação, regras de aplicação e recursos não encontrados seguem o formato `ProblemDetails` (`application/problem+json`), incluindo o status HTTP e um detalhe apropriado para o cliente. Exceções inesperadas seguem o middleware padrão e não expõem mensagens internas.
-
-No ambiente `Development`, Swagger UI fica em `/swagger` e o documento OpenAPI em `/swagger/v1/swagger.json`. A especificação declara o esquema HTTP Bearer/JWT e os endpoints têm nomes, sumários, descrições e códigos de resposta. Para ambiente real, configure `Jwt:Authority`, `Jwt:Issuer` e `Jwt:Audience` para um provedor confiável; não use a chave simétrica do script local.
-
-| Operação | Resultado |
+| Falha | Comportamento |
 | --- | --- |
-| `POST /accounts` | Cria uma conta a partir de uma referência opaca do titular |
-| `GET /accounts/{id}` | Consulta os dados da conta somente para o titular |
-| `POST /accounts/{id}/transactions` | Registra `credit` ou `debit` em centavos, usando `idempotencyKey` |
-| `GET /accounts/{id}/transactions/{transactionId}` | Consulta um lançamento somente para o titular da conta |
-| `GET /accounts/{id}/balance` | Retorna o saldo atual |
-| `GET /accounts/{id}/balance?at={data/hora}` | Retorna o saldo até o instante informado (`dd/MM/yyyy HH:mm:ss zzz`) |
-| `GET /customers/me/balance` | Consolida as contas do titular autenticado, no instante atual ou em `at` |
+| API de escrita parada | Leituras continuam no banco projetado. Novos lançamentos não são confirmados. |
+| Banco de escrita indisponível | Novos lançamentos falham; a API de leitura mantém a última projeção independente. |
+| Worker ou banco de leitura indisponível | Lançamentos confirmados ficam na outbox; leituras existentes continuam quando o banco de leitura está acessível e mostram `dataAsOf`. |
+| Queda após commit de leitura e antes da confirmação da outbox | O evento reaparece; o ID já projetado impede duplicação. |
+| Evento inválido permanente | Após 10 tentativas, fica marcado como dead letter; o worker continua com os próximos eventos e emite log/telemetria. Reprocessamento exige correção operacional. |
+| Banco de leitura perdido | É reconstruível pela outbox enquanto os eventos forem retidos; há script manual para o ambiente local, sem troca sem indisponibilidade. |
+| Banco de escrita perdido | Restaurar backup consistente é obrigatório; o protótipo não tem replicação nem recuperação automática. |
 
-## Evolução para produção
+O banco de leitura ainda depende de estar disponível para responder consultas; separar bancos e processos não é failover. O Docker Compose local usa duas instâncias PostgreSQL independentes, mas não fornece replicação, failover, redundância de zona ou backup externo. Portanto, a topologia local demonstra isolamento de processo e datastore, mas não prova disponibilidade mensal nem RPO/RTO de produção.
 
-Fechar requisitos de moeda e escala, reservas, saldo disponível versus contábil, estornos, lançamentos retroativos, ordenação e retenção. Trocar o adapter JSON por PostgreSQL ou SQL Server, com migrations versionadas, restrição de idempotência no banco, atualização condicional/lock de linha, backups testados e reconciliação. Integrar a autenticação JWT a um provedor de identidade gerenciado e ampliar autorização com escopos/políticas conforme os perfis de acesso. Completar criptografia, gestão de segredos, auditoria e telemetria sem dados sensíveis. Definir metas de disponibilidade e latência com o negócio antes de escolher cache, particionamento ou distribuição.
+## Segurança
+
+- Os modos `write` e `read` exigem `financial.write` e `financial.read`, respectivamente. São aceitos claims `scope` e `scp` com scopes separados por espaço.
+- Fora de `Development`, a API exige `Jwt:Authority`, valida issuer/audience/expiração e recusa `Jwt:SigningKey`. A identidade do titular vem de `sub` e é comparada sem normalização.
+- O limiter aplica teto global por IP e limites específicos por subject; o corpo HTTP é limitado a 64 KiB e cabeçalhos a 16 KiB. Os contadores são locais ao processo, portanto uma implantação com várias instâncias precisa complementar isso com limites no gateway/WAF ou um limiter distribuído.
+- Auditoria financeira registra ator, ação, conta, transação e instante dentro da transação de escrita. O banco de leitura registra consultas sem guardar valores financeiros.
+- Logs e métricas não incluem subject, conta, lançamento, idempotency key, descrição ou valor. O middleware devolve `X-Correlation-ID`; ASP.NET e o serviço de domínio geram spans correlacionados.
+- Em ambiente real, segredo JWT fica no provedor de identidade; credenciais de banco devem vir de secret manager. A conexão PostgreSQL exige `SslMode=VerifyFull` fora de Development. Criptografia em repouso e retenção dependem da plataforma e da política aprovada.
+
+## Operação e observabilidade
+
+- `/health/live` verifica que o processo responde; `/health/ready` verifica banco e, para leitura, heartbeat/backlog do projetor. Projeção degradada informa status sem remover a API de leitura do balanceador, pois a última posição continua disponível.
+- Logs são JSON estruturados com correlação. OpenTelemetry coleta instrumentação ASP.NET/HTTP, traces do caso de uso e métricas de transações e projeção. Configure `OTEL_EXPORTER_OTLP_ENDPOINT` e um backend para armazenar, consultar e alertar sobre os sinais.
+- Métricas próprias incluem lançamentos aceitos, repetições idempotentes, eventos projetados, duração de lote, eventos pendentes, dead letters e idade do backlog.
+- Procedimentos de deploy, backup/restore, rollback e troubleshooting estão em [`runbook.md`](runbook.md). O ambiente local não é backup nem recuperação de desastre.
+
+## Limites restantes
+
+Não há teste de carga executado, replicação/failover de PostgreSQL, proxy/balanceador, rotação real de secrets, política legal de retenção ou reconciliação automatizada de negócio. A outbox mantém eventos processados e pode crescer indefinidamente até uma política de arquivamento ser aprovada. O teste PostgreSQL mede regras transacionais e reprocessamento; não substitui teste multi-host ou ensaio operacional. As premissas numéricas devem ser ajustadas antes de tratar esta arquitetura como compromisso para produção.

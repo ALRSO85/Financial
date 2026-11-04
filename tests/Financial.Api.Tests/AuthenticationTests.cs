@@ -31,6 +31,7 @@ public sealed class AuthenticationTests : IAsyncLifetime
         SetEnvironmentVariable("Jwt__Issuer", Issuer);
         SetEnvironmentVariable("Jwt__Audience", Audience);
         SetEnvironmentVariable("Jwt__SigningKey", SigningKey);
+        SetEnvironmentVariable("Financial__StorageProvider", "json");
         SetEnvironmentVariable("Financial__FilePath", _filePath);
         _factory = new WebApplicationFactory<global::Program>().WithWebHostBuilder(builder =>
         {
@@ -102,6 +103,10 @@ public sealed class AuthenticationTests : IAsyncLifetime
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }
 
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateToken("customer-123", scope: "financial.read"));
+        var missingWriteScope = await _client.PostAsync("/accounts", content: null);
+        Assert.Equal(HttpStatusCode.Forbidden, missingWriteScope.StatusCode);
+
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateToken("customer-123"));
         var createResponse = await _client.PostAsync("/accounts", content: null);
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
@@ -171,14 +176,24 @@ public sealed class AuthenticationTests : IAsyncLifetime
         Assert.Equal("application/problem+json", otherOwnerTransaction.Content.Headers.ContentType?.MediaType);
         var otherCustomerBalance = await _client.GetAsync("/customers/me/balance");
         Assert.Equal(HttpStatusCode.NotFound, otherCustomerBalance.StatusCode);
+
+        var rateLimitObserved = false;
+        for (var index = 0; index < 70 && !rateLimitObserved; index++)
+        {
+            var response = await _client.PostAsync("/accounts", content: null);
+            rateLimitObserved = response.StatusCode == HttpStatusCode.TooManyRequests;
+        }
+        Assert.True(rateLimitObserved, "A API deveria limitar gravações repetidas por subject.");
     }
 
     private static string CreateToken(string? subject, string issuer = Issuer, string audience = Audience,
-        DateTime? expires = null, string signingKey = SigningKey)
+        DateTime? expires = null, string signingKey = SigningKey, string scope = "financial.read financial.write")
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        var claims = subject is null ? [] : new[] { new Claim("sub", subject) };
+        Claim[] claims = subject is null
+            ? [new Claim("scope", scope)]
+            : [new Claim("sub", subject), new Claim("scope", scope)];
         var expiry = expires ?? DateTime.UtcNow.AddMinutes(5);
         var notBefore = expires is null ? DateTime.UtcNow.AddMinutes(-1) : expiry.AddMinutes(-10);
         var token = new JwtSecurityToken(issuer, audience, claims, notBefore, expiry, credentials);

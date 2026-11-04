@@ -1,11 +1,98 @@
 using System.Globalization;
 using System.Security.Claims;
 using Financial.Application;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace Financial.Api;
 
 public static class FinancialEndpoints
 {
+    public static IEndpointRouteBuilder MapWriteFinancialEndpoints(this IEndpointRouteBuilder endpoints)
+    {
+        endpoints.MapPost("/accounts", async (ClaimsPrincipal user, FinancialApplicationService service, CancellationToken ct) =>
+        {
+            var ownerReference = user.FindFirstValue("sub");
+            if (string.IsNullOrWhiteSpace(ownerReference)) return Results.Forbid();
+            var result = await service.CreateAccountAsync(ownerReference, ct);
+            return Results.Created($"/accounts/{result.Id}", result);
+        }).WithName("CreateAccount").WithSummary("Cria uma conta")
+            .Produces<AccountResponse>(StatusCodes.Status201Created).ProducesProblem(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized).RequireAuthorization("financial.write").RequireRateLimiting("financial.write");
+
+        endpoints.MapPost("/accounts/{accountId:guid}/transactions", async (Guid accountId, ClaimsPrincipal user,
+            PostTransactionRequest request, FinancialApplicationService service, CancellationToken ct) =>
+        {
+            var ownerReference = user.FindFirstValue("sub");
+            if (string.IsNullOrWhiteSpace(ownerReference)) return Results.Forbid();
+            var result = await service.PostAsync(accountId, ownerReference, request, ct);
+            return result.IsNew
+                ? Results.Created($"/accounts/{accountId}/transactions/{result.Transaction.Id}", result.Transaction)
+                : Results.Ok(result.Transaction);
+        }).WithName("PostTransaction").WithSummary("Registra um crédito ou débito")
+            .WithDescription("Os valores são informados em centavos. Reenvie com a mesma chave de idempotência após timeout.")
+            .Produces<TransactionResponse>(StatusCodes.Status201Created).Produces<TransactionResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest).ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .Produces(StatusCodes.Status401Unauthorized).RequireAuthorization("financial.write").RequireRateLimiting("financial.write");
+
+        return endpoints;
+    }
+
+    public static IEndpointRouteBuilder MapReadFinancialEndpoints(this IEndpointRouteBuilder endpoints)
+    {
+        endpoints.MapGet("/accounts/{accountId:guid}", async (Guid accountId, ClaimsPrincipal user,
+            IFinancialReadRepository repository, CancellationToken ct) =>
+        {
+            var ownerReference = user.FindFirstValue("sub");
+            if (string.IsNullOrWhiteSpace(ownerReference)) return Results.Forbid();
+            var account = await repository.GetAccountAsync(accountId, ownerReference, ct);
+            return account is null ? NotFoundProblem() : Results.Ok(account);
+        }).WithName("GetAccount").WithSummary("Consulta uma conta")
+            .Produces<AccountResponse>(StatusCodes.Status200OK).ProducesProblem(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status401Unauthorized).RequireAuthorization("financial.read").RequireRateLimiting("financial.read");
+
+        endpoints.MapGet("/accounts/{accountId:guid}/transactions/{transactionId:guid}", async (Guid accountId,
+            Guid transactionId, ClaimsPrincipal user, IFinancialReadRepository repository, CancellationToken ct) =>
+        {
+            var ownerReference = user.FindFirstValue("sub");
+            if (string.IsNullOrWhiteSpace(ownerReference)) return Results.Forbid();
+            var transaction = await repository.GetTransactionAsync(accountId, transactionId, ownerReference, ct);
+            return transaction is null ? NotFoundProblem() : Results.Ok(transaction);
+        }).WithName("GetTransaction").WithSummary("Consulta um lançamento")
+            .Produces<TransactionResponse>(StatusCodes.Status200OK).ProducesProblem(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status401Unauthorized).RequireAuthorization("financial.read").RequireRateLimiting("financial.read");
+
+        endpoints.MapGet("/accounts/{accountId:guid}/balance", async (Guid accountId, ClaimsPrincipal user, string? at,
+            IFinancialReadRepository repository, CancellationToken ct) =>
+        {
+            var ownerReference = user.FindFirstValue("sub");
+            if (string.IsNullOrWhiteSpace(ownerReference)) return Results.Forbid();
+            if (!TryParseInstant(at, out var instant)) return InvalidInstantProblem();
+            var balance = await repository.GetBalanceAsync(accountId, ownerReference, instant, ct);
+            return balance is null ? NotFoundProblem() : Results.Ok(balance);
+        }).WithName("GetBalance").WithSummary("Consulta o saldo da conta")
+            .WithDescription("A resposta inclui DataAsOf, o instante mais recente aplicado à projeção de leitura.")
+            .Produces<BalanceResponse>(StatusCodes.Status200OK).ProducesValidationProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound).Produces(StatusCodes.Status401Unauthorized)
+            .RequireAuthorization("financial.read").RequireRateLimiting("financial.read");
+
+        endpoints.MapGet("/customers/me/balance", async (ClaimsPrincipal user, string? at,
+            IFinancialReadRepository repository, CancellationToken ct) =>
+        {
+            var ownerReference = user.FindFirstValue("sub");
+            if (string.IsNullOrWhiteSpace(ownerReference)) return Results.Forbid();
+            if (!TryParseInstant(at, out var instant)) return InvalidInstantProblem();
+            var balance = await repository.GetCustomerBalanceAsync(ownerReference, instant, ct);
+            return balance is null ? NotFoundProblem() : Results.Ok(balance);
+        }).WithName("GetCustomerBalance").WithSummary("Consulta o saldo consolidado")
+            .WithDescription("A resposta inclui DataAsOf, o instante mais recente aplicado à projeção de leitura.")
+            .Produces<CustomerBalanceResponse>(StatusCodes.Status200OK).ProducesValidationProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound).Produces(StatusCodes.Status401Unauthorized)
+            .RequireAuthorization("financial.read").RequireRateLimiting("financial.read");
+
+        return endpoints;
+    }
+
     public static IEndpointRouteBuilder MapFinancialEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapPost("/accounts", async (ClaimsPrincipal user, FinancialApplicationService service, CancellationToken ct) =>
@@ -22,7 +109,7 @@ public static class FinancialEndpoints
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
             .Produces(StatusCodes.Status403Forbidden)
-            .RequireAuthorization();
+            .RequireAuthorization("financial.write").RequireRateLimiting("financial.write");
 
         endpoints.MapGet("/accounts/{accountId:guid}", async (Guid accountId, ClaimsPrincipal user, FinancialApplicationService service, CancellationToken ct) =>
         {
@@ -38,7 +125,7 @@ public static class FinancialEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status401Unauthorized)
             .Produces(StatusCodes.Status403Forbidden)
-            .RequireAuthorization();
+            .RequireAuthorization("financial.read").RequireRateLimiting("financial.read");
 
         endpoints.MapPost("/accounts/{accountId:guid}/transactions", async (Guid accountId, ClaimsPrincipal user, PostTransactionRequest request, FinancialApplicationService service, CancellationToken ct) =>
         {
@@ -60,7 +147,7 @@ public static class FinancialEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .Produces(StatusCodes.Status401Unauthorized)
             .Produces(StatusCodes.Status403Forbidden)
-            .RequireAuthorization();
+            .RequireAuthorization("financial.write").RequireRateLimiting("financial.write");
 
         endpoints.MapGet("/accounts/{accountId:guid}/transactions/{transactionId:guid}", async (Guid accountId, Guid transactionId, ClaimsPrincipal user, FinancialApplicationService service, CancellationToken ct) =>
         {
@@ -76,7 +163,7 @@ public static class FinancialEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status401Unauthorized)
             .Produces(StatusCodes.Status403Forbidden)
-            .RequireAuthorization();
+            .RequireAuthorization("financial.read").RequireRateLimiting("financial.read");
 
         endpoints.MapGet("/accounts/{accountId:guid}/balance", async (Guid accountId, ClaimsPrincipal user, string? at, FinancialApplicationService service, CancellationToken ct) =>
         {
@@ -95,7 +182,7 @@ public static class FinancialEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status401Unauthorized)
             .Produces(StatusCodes.Status403Forbidden)
-            .RequireAuthorization();
+            .RequireAuthorization("financial.read").RequireRateLimiting("financial.read");
 
         endpoints.MapGet("/customers/me/balance", async (ClaimsPrincipal user, string? at, FinancialApplicationService service, CancellationToken ct) =>
         {
@@ -114,7 +201,7 @@ public static class FinancialEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status401Unauthorized)
             .Produces(StatusCodes.Status403Forbidden)
-            .RequireAuthorization();
+            .RequireAuthorization("financial.read").RequireRateLimiting("financial.read");
 
         return endpoints;
     }

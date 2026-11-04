@@ -1,8 +1,19 @@
 using Financial.Application;
 using Financial.Api;
+using Financial.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using System.Diagnostics;
+using System.Security.Claims;
+using System.Threading.RateLimiting;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -10,6 +21,15 @@ var jwtIssuer = builder.Configuration["Jwt:Issuer"];
 var jwtAudience = builder.Configuration["Jwt:Audience"];
 var jwtAuthority = builder.Configuration["Jwt:Authority"];
 var jwtSigningKey = builder.Configuration["Jwt:SigningKey"];
+var apiRole = builder.Configuration["Financial:ApiRole"] ?? "combined";
+if (apiRole is not ("write" or "read" or "combined"))
+    throw new InvalidOperationException("Financial:ApiRole deve ser 'write', 'read' ou 'combined'.");
+if (apiRole == "combined" && !builder.Environment.IsDevelopment())
+    throw new InvalidOperationException("O modo combined é exclusivo de desenvolvimento/teste; implante os modos write e read separadamente.");
+if (!builder.Environment.IsDevelopment() && string.IsNullOrWhiteSpace(jwtAuthority))
+    throw new InvalidOperationException("Fora de Development, Jwt:Authority deve apontar para um provedor de identidade confiável.");
+if (!builder.Environment.IsDevelopment() && !string.IsNullOrWhiteSpace(jwtSigningKey))
+    throw new InvalidOperationException("Jwt:SigningKey simétrica só é aceita em Development; use Jwt:Authority fora do ambiente local.");
 
 if (string.IsNullOrWhiteSpace(jwtIssuer) || string.IsNullOrWhiteSpace(jwtAudience))
     throw new InvalidOperationException("Configure Jwt:Issuer e Jwt:Audience para validar tokens.");
@@ -20,11 +40,32 @@ if (!string.IsNullOrWhiteSpace(jwtSigningKey) && !string.IsNullOrWhiteSpace(jwtA
 if (!string.IsNullOrWhiteSpace(jwtSigningKey) && Encoding.UTF8.GetByteCount(jwtSigningKey) < 32)
     throw new InvalidOperationException("Jwt:SigningKey deve conter pelo menos 32 bytes.");
 
-builder.Services.AddFinancialPersistence(builder.Configuration, builder.Environment);
+builder.Services.AddFinancialPersistence(builder.Configuration, builder.Environment, apiRole);
+builder.Logging.ClearProviders();
+builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
+builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = 64 * 1024;
+    options.Limits.MaxRequestHeadersTotalSize = 16 * 1024;
+});
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddSingleton<FinancialApplicationService>();
+if (apiRole is "write" or "combined")
+    builder.Services.AddSingleton<FinancialApplicationService>();
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<FinancialExceptionHandler>();
+var healthChecks = builder.Services.AddHealthChecks()
+    .AddCheck("process", () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy(), tags: ["live"]);
+if (apiRole is "write" or "read")
+{
+    builder.Services.AddSingleton<PostgresReadinessHealthCheck>();
+    healthChecks.AddCheck<PostgresReadinessHealthCheck>("postgres", tags: ["ready"]);
+}
+if (apiRole == "read")
+{
+    builder.Services.AddSingleton<ProjectionFreshnessHealthCheck>();
+    healthChecks.AddCheck<ProjectionFreshnessHealthCheck>("projection-freshness", tags: ["ready"]);
+}
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -62,7 +103,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     {
         OnTokenValidated = context =>
         {
-            if (context.Principal?.FindFirst("sub") is null)
+            if (string.IsNullOrWhiteSpace(context.Principal?.FindFirst("sub")?.Value))
                 context.Fail("O token não contém o claim obrigatório sub.");
             return Task.CompletedTask;
         }
@@ -74,9 +115,79 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
         options.TokenValidationParameters.ValidAlgorithms = [SecurityAlgorithms.HmacSha256];
     }
 });
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("financial.read", policy => policy.RequireAuthenticatedUser().RequireAssertion(context => HasScope(context.User, "financial.read")));
+    options.AddPolicy("financial.write", policy => policy.RequireAuthenticatedUser().RequireAssertion(context => HasScope(context.User, "financial.write")));
+});
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+        RateLimitPartition.GetTokenBucketLimiter(GetClientRateLimitKey(context), _ => new TokenBucketRateLimiterOptions
+        {
+            TokenLimit = 1000,
+            TokensPerPeriod = 1000,
+            ReplenishmentPeriod = TimeSpan.FromMinutes(1),
+            AutoReplenishment = true,
+            QueueLimit = 0
+        }));
+    options.AddPolicy("financial.read", context => RateLimitPartition.GetTokenBucketLimiter(GetRateLimitKey(context), _ =>
+        new TokenBucketRateLimiterOptions
+        {
+            TokenLimit = 300,
+            TokensPerPeriod = 300,
+            ReplenishmentPeriod = TimeSpan.FromMinutes(1),
+            AutoReplenishment = true,
+            QueueLimit = 0
+        }));
+    options.AddPolicy("financial.write", context => RateLimitPartition.GetTokenBucketLimiter(GetRateLimitKey(context), _ =>
+        new TokenBucketRateLimiterOptions
+        {
+            TokenLimit = 60,
+            TokensPerPeriod = 60,
+            ReplenishmentPeriod = TimeSpan.FromMinutes(1),
+            AutoReplenishment = true,
+            QueueLimit = 0
+        }));
+});
+
+var telemetry = builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService($"Financial.{apiRole}"))
+    .WithTracing(tracing => tracing.AddAspNetCoreInstrumentation(options =>
+        options.EnrichWithHttpRequest = (activity, request) =>
+        {
+            if (request.HttpContext.GetEndpoint() is RouteEndpoint endpoint && endpoint.RoutePattern.RawText is { } route)
+            {
+                activity.SetTag("http.route", route);
+                activity.SetTag("url.path", route);
+                activity.SetTag("http.target", route);
+                activity.SetTag("url.full", $"{request.Scheme}://{request.Host}{route}");
+            }
+        }).AddHttpClientInstrumentation()
+        .AddSource(FinancialTelemetry.InstrumentationName))
+    .WithMetrics(metrics => metrics.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation()
+        .AddMeter(FinancialTelemetry.InstrumentationName, "Financial.Infrastructure"));
+if (!string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]))
+    telemetry.WithTracing(tracing => tracing.AddOtlpExporter())
+        .WithMetrics(metrics => metrics.AddOtlpExporter())
+        .WithLogging(logging => logging.AddOtlpExporter());
+
+static string GetRateLimitKey(HttpContext context) =>
+    context.User.FindFirst("sub")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+static string GetClientRateLimitKey(HttpContext context) =>
+    context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+static bool HasScope(ClaimsPrincipal principal, string requiredScope) => principal.FindAll("scope").Concat(principal.FindAll("scp"))
+    .SelectMany(claim => claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+    .Contains(requiredScope, StringComparer.Ordinal);
 
 var app = builder.Build();
+if (app.Environment.IsDevelopment() && app.Services.GetService<PostgresFinancialDatabaseInitializer>() is { } databaseInitializer)
+    await databaseInitializer.InitializeAsync(app.Lifetime.ApplicationStopping);
+if (app.Environment.IsDevelopment() && app.Services.GetService<PostgresFinancialReadDatabaseInitializer>() is { } readDatabaseInitializer)
+    await readDatabaseInitializer.InitializeAsync(app.Lifetime.ApplicationStopping);
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -111,9 +222,38 @@ if (app.Environment.IsDevelopment())
         """, "text/html; charset=utf-8")).ExcludeFromDescription();
 }
 app.UseExceptionHandler();
+app.UseRouting();
+app.Use(async (context, next) =>
+{
+    var correlationId = Activity.Current?.TraceId.ToString() ?? context.TraceIdentifier;
+    var route = context.GetEndpoint() is RouteEndpoint routeEndpoint
+        ? routeEndpoint.RoutePattern.RawText ?? "unmatched"
+        : "unmatched";
+    context.Response.OnStarting(() =>
+    {
+        context.Response.Headers["X-Correlation-ID"] = correlationId;
+        return Task.CompletedTask;
+    });
+    using (app.Logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
+    {
+        await next();
+        app.Logger.LogInformation("HTTP request completed {HttpMethod} {Route} {StatusCode}",
+            context.Request.Method, route, context.Response.StatusCode);
+    }
+});
+if (!app.Environment.IsDevelopment()) app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
-app.MapFinancialEndpoints();
+app.UseRateLimiter();
+app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = check => check.Tags.Contains("live") });
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+    ResultStatusCodes = { [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded] = StatusCodes.Status200OK }
+});
+if (apiRole == "write") app.MapWriteFinancialEndpoints();
+else if (apiRole == "read") app.MapReadFinancialEndpoints();
+else app.MapFinancialEndpoints();
 
 app.Run();
 

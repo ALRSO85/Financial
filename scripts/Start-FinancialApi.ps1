@@ -8,11 +8,17 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 if (-not [string]::IsNullOrWhiteSpace($env:Jwt__Authority)) {
     throw "Este script é para desenvolvimento local com chave simétrica. Remova Jwt:Authority ou inicie a API com sua configuração de provedor de identidade."
 }
-
 $variables = [ordered]@{
+    Financial__ApiRole = "write"
     Jwt__Issuer = "financial-local"
     Jwt__Audience = "financial-api"
     Jwt__SigningKey = "local-only-change-this-key-to-a-random-32-byte-value"
+}
+$connectionVariable = "ConnectionStrings__FinancialWrite"
+$previousConnection = [Environment]::GetEnvironmentVariable($connectionVariable, "Process")
+if ([string]::IsNullOrWhiteSpace($previousConnection)) {
+    [Environment]::SetEnvironmentVariable($connectionVariable,
+        "Host=localhost;Port=5432;Database=financial;Username=financial;Password=financial-local-only", "Process")
 }
 $previousValues = @{}
 
@@ -30,5 +36,8 @@ try {
 finally {
     foreach ($name in $variables.Keys) {
         [Environment]::SetEnvironmentVariable($name, $previousValues[$name], "Process")
+    }
+    if ([string]::IsNullOrWhiteSpace($previousConnection)) {
+        [Environment]::SetEnvironmentVariable($connectionVariable, $previousConnection, "Process")
     }
 }
