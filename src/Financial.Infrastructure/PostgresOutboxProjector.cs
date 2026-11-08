@@ -63,16 +63,20 @@ public sealed class PostgresOutboxProjector(NpgsqlDataSource writeDataSource, Np
 
         await using var readConnection = await readDataSource.OpenConnectionAsync(cancellationToken);
         await using var readTransaction = await readConnection.BeginTransactionAsync(cancellationToken);
-        foreach (var pendingEvent in pendingEvents)
-            await ApplyEventAsync(pendingEvent, readConnection, readTransaction, cancellationToken);
+        await using (var batch = new NpgsqlBatch(readConnection, readTransaction))
+        {
+            foreach (var pendingEvent in pendingEvents)
+                foreach (var command in CreateApplyCommands(pendingEvent))
+                    batch.BatchCommands.Add(command);
+            await batch.ExecuteNonQueryAsync(cancellationToken);
+        }
         await readTransaction.CommitAsync(cancellationToken);
 
-        foreach (var pendingEvent in pendingEvents)
+        await using (var markProcessed = new NpgsqlCommand(
+            "UPDATE financial_outbox SET processed_at = @now, attempts = attempts + 1, last_error = NULL " +
+            "WHERE event_id = ANY(@ids) AND processed_at IS NULL", writeConnection, writeTransaction))
         {
-            await using var markProcessed = new NpgsqlCommand(
-                "UPDATE financial_outbox SET processed_at = @now, attempts = attempts + 1, last_error = NULL " +
-                "WHERE event_id = @id AND processed_at IS NULL", writeConnection, writeTransaction);
-            markProcessed.Parameters.AddWithValue("id", pendingEvent.Id);
+            markProcessed.Parameters.AddWithValue("ids", pendingEvents.Select(item => item.Id).ToArray());
             markProcessed.Parameters.AddWithValue("now", DateTimeOffset.UtcNow);
             await markProcessed.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -151,69 +155,53 @@ public sealed class PostgresOutboxProjector(NpgsqlDataSource writeDataSource, Np
             reader.IsDBNull(2) ? null : reader.GetFieldValue<DateTimeOffset>(2));
     }
 
-    private static async Task ApplyEventAsync(PendingEvent pendingEvent, NpgsqlConnection connection,
-        NpgsqlTransaction transaction, CancellationToken cancellationToken)
+    private static IReadOnlyList<NpgsqlBatchCommand> CreateApplyCommands(PendingEvent pendingEvent)
     {
-        await using (var record = new NpgsqlCommand(
-            "INSERT INTO financial_projected_events (event_id, projected_at) VALUES (@id, @now) ON CONFLICT DO NOTHING",
-            connection, transaction))
-        {
-            record.Parameters.AddWithValue("id", pendingEvent.Id);
-            record.Parameters.AddWithValue("now", DateTimeOffset.UtcNow);
-            if (await record.ExecuteNonQueryAsync(cancellationToken) == 0) return;
-        }
-
         using var document = JsonDocument.Parse(pendingEvent.Payload);
         var payload = document.RootElement;
+        var appliedAt = DateTimeOffset.UtcNow;
+        var commands = new List<NpgsqlBatchCommand>();
+        var record = new NpgsqlBatchCommand("INSERT INTO financial_projected_events (event_id, projected_at) VALUES (@eventId, @appliedAt) ON CONFLICT DO NOTHING");
+        record.Parameters.AddWithValue("eventId", pendingEvent.Id);
+        record.Parameters.AddWithValue("appliedAt", appliedAt);
+        commands.Add(record);
         if (pendingEvent.Type == "account.opened")
         {
-            await using var account = new NpgsqlCommand(
-                "INSERT INTO financial_read_accounts " +
+            var account = new NpgsqlBatchCommand("INSERT INTO financial_read_accounts " +
                 "(account_id, owner_reference, created_at, balance_cents, last_occurred_at, last_applied_at) " +
-                "VALUES (@id, @owner, @created, @balance, NULL, @applied) ON CONFLICT (account_id) DO NOTHING",
-                connection, transaction);
-            account.Parameters.AddWithValue("id", payload.GetProperty("accountId").GetGuid());
+                "VALUES (@accountId, @owner, @created, @balance, NULL, @appliedAt) ON CONFLICT (account_id) DO NOTHING");
+            account.Parameters.AddWithValue("accountId", payload.GetProperty("accountId").GetGuid());
             account.Parameters.AddWithValue("owner", payload.GetProperty("ownerReference").GetString()!);
             account.Parameters.AddWithValue("created", payload.GetProperty("createdAt").GetDateTimeOffset().ToUniversalTime());
             account.Parameters.AddWithValue("balance", payload.GetProperty("balanceInCents").GetInt64());
-            account.Parameters.AddWithValue("applied", pendingEvent.CreatedAt.ToUniversalTime());
-            await account.ExecuteNonQueryAsync(cancellationToken);
+            account.Parameters.AddWithValue("appliedAt", appliedAt);
+            commands.Add(account);
         }
         else if (pendingEvent.Type == "transaction.posted")
         {
             var accountId = payload.GetProperty("accountId").GetGuid();
             var occurredAt = payload.GetProperty("occurredAt").GetDateTimeOffset().ToUniversalTime();
-            var createdAt = payload.GetProperty("createdAt").GetDateTimeOffset().ToUniversalTime();
-            var owner = payload.GetProperty("ownerReference").GetString()!;
-            var balance = payload.GetProperty("balanceInCents").GetInt64();
-
-            await using (var account = new NpgsqlCommand(
-                "INSERT INTO financial_read_accounts " +
+            var account = new NpgsqlBatchCommand("INSERT INTO financial_read_accounts " +
                 "(account_id, owner_reference, created_at, balance_cents, last_occurred_at, last_applied_at) " +
-                "VALUES (@id, @owner, @created, @balance, @occurred, @applied) " +
+                "VALUES (@accountId, @owner, @created, @balance, @occurred, @appliedAt) " +
                 "ON CONFLICT (account_id) DO UPDATE SET balance_cents = EXCLUDED.balance_cents, " +
                 "last_occurred_at = EXCLUDED.last_occurred_at, last_applied_at = EXCLUDED.last_applied_at " +
                 "WHERE financial_read_accounts.last_occurred_at IS NULL OR " +
-                "EXCLUDED.last_occurred_at > financial_read_accounts.last_occurred_at",
-                connection, transaction))
-            {
-                account.Parameters.AddWithValue("id", accountId);
-                account.Parameters.AddWithValue("owner", owner);
-                account.Parameters.AddWithValue("created", createdAt);
-                account.Parameters.AddWithValue("balance", balance);
-                account.Parameters.AddWithValue("occurred", occurredAt);
-                account.Parameters.AddWithValue("applied", pendingEvent.CreatedAt.ToUniversalTime());
-                await account.ExecuteNonQueryAsync(cancellationToken);
-            }
+                "EXCLUDED.last_occurred_at > financial_read_accounts.last_occurred_at");
+            account.Parameters.AddWithValue("accountId", accountId);
+            account.Parameters.AddWithValue("owner", payload.GetProperty("ownerReference").GetString()!);
+            account.Parameters.AddWithValue("created", payload.GetProperty("createdAt").GetDateTimeOffset().ToUniversalTime());
+            account.Parameters.AddWithValue("balance", payload.GetProperty("balanceInCents").GetInt64());
+            account.Parameters.AddWithValue("occurred", occurredAt);
+            account.Parameters.AddWithValue("appliedAt", appliedAt);
+            commands.Add(account);
 
-            await using var entry = new NpgsqlCommand(
-                "INSERT INTO financial_read_entries " +
+            var entry = new NpgsqlBatchCommand("INSERT INTO financial_read_entries " +
                 "(entry_id, account_id, entry_type, amount_cents, signed_amount_cents, idempotency_key, description, occurred_at) " +
-                "VALUES (@id, @account, @type, @amount, @signed, @key, @description, @occurred) ON CONFLICT DO NOTHING",
-                connection, transaction);
-            entry.Parameters.AddWithValue("id", payload.GetProperty("transactionId").GetGuid());
-            entry.Parameters.AddWithValue("account", accountId);
-            entry.Parameters.AddWithValue("type", payload.GetProperty("type").GetString()!);
+                "VALUES (@transactionId, @accountId, @entryType, @amount, @signed, @key, @description, @occurred) ON CONFLICT DO NOTHING");
+            entry.Parameters.AddWithValue("transactionId", payload.GetProperty("transactionId").GetGuid());
+            entry.Parameters.AddWithValue("accountId", accountId);
+            entry.Parameters.AddWithValue("entryType", payload.GetProperty("type").GetString()!);
             entry.Parameters.AddWithValue("amount", payload.GetProperty("amountInCents").GetInt64());
             entry.Parameters.AddWithValue("signed", payload.GetProperty("signedAmountInCents").GetInt64());
             entry.Parameters.AddWithValue("key", payload.GetProperty("idempotencyKey").GetString()!);
@@ -221,23 +209,23 @@ public sealed class PostgresOutboxProjector(NpgsqlDataSource writeDataSource, Np
             entry.Parameters.AddWithValue("description", description.ValueKind == JsonValueKind.Null
                 ? DBNull.Value : description.GetString()!);
             entry.Parameters.AddWithValue("occurred", occurredAt);
-            await entry.ExecuteNonQueryAsync(cancellationToken);
+            commands.Add(entry);
         }
         else
         {
             throw new InvalidDataException($"Tipo de evento desconhecido na outbox: {pendingEvent.Type}.");
         }
 
-        await using var checkpoint = new NpgsqlCommand(
-            "INSERT INTO financial_projection_checkpoint (checkpoint_id, last_event_created_at, last_event_id, updated_at) " +
-            "VALUES (1, @created, @id, @now) ON CONFLICT (checkpoint_id) DO UPDATE SET " +
+        var checkpoint = new NpgsqlBatchCommand("INSERT INTO financial_projection_checkpoint (checkpoint_id, last_event_created_at, last_event_id, updated_at) " +
+            "VALUES (1, @eventCreated, @eventId, @appliedAt) ON CONFLICT (checkpoint_id) DO UPDATE SET " +
             "last_event_created_at = EXCLUDED.last_event_created_at, last_event_id = EXCLUDED.last_event_id, updated_at = EXCLUDED.updated_at " +
             "WHERE (financial_projection_checkpoint.last_event_created_at, financial_projection_checkpoint.last_event_id) " +
-            "< (EXCLUDED.last_event_created_at, EXCLUDED.last_event_id)", connection, transaction);
-        checkpoint.Parameters.AddWithValue("created", pendingEvent.CreatedAt.ToUniversalTime());
-        checkpoint.Parameters.AddWithValue("id", pendingEvent.Id);
-        checkpoint.Parameters.AddWithValue("now", DateTimeOffset.UtcNow);
-        await checkpoint.ExecuteNonQueryAsync(cancellationToken);
+            "< (EXCLUDED.last_event_created_at, EXCLUDED.last_event_id)");
+        checkpoint.Parameters.AddWithValue("eventCreated", pendingEvent.CreatedAt.ToUniversalTime());
+        checkpoint.Parameters.AddWithValue("eventId", pendingEvent.Id);
+        checkpoint.Parameters.AddWithValue("appliedAt", appliedAt);
+        commands.Add(checkpoint);
+        return commands;
     }
 
     private sealed record PendingEvent(Guid Id, string Type, string Payload, DateTimeOffset CreatedAt);

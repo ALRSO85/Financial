@@ -117,6 +117,10 @@ O saldo agregado esperado e observado após a projeção foi 93.500 centavos par
 
 Este ensaio mostra o caminho transacional e a projeção eventual a aproximadamente 100 escritas/s neste host e com 10 contas. Não comprova o pico de 500 escritas/s, múltiplas instâncias, falha de processo durante commit, nem capacidade sob crescimento prolongado ou infraestrutura distribuída. O aumento temporário dos limiters serviu apenas para o ensaio isolado.
 
+Em 08/11/2026, foi executado um ensaio isolado de cinco minutos a aproximadamente 500 escritas/s, totalizando 150.000 operações. Todas retornaram `201`; p50 43,93 ms, p95 317,13 ms, p99 701,64 ms e máximo 1.027,72 ms. O p95 excedeu a referência provisória de 300 ms usada no ensaio. Ao final, a outbox ainda tinha backlog, portanto o resultado da API não representa capacidade sustentada do pipeline completo.
+
+Com o worker otimizado para enviar comandos em lote e marcar eventos processados em uma atualização, a fila de `financial_write_loadtest` foi drenada. Uma janela de 30 s observou 10.200 eventos processados (aproximadamente 340/s), seguida de zero pendentes. A reconciliação final encontrou 50 contas, 176.471 lançamentos e saldo agregado de 263.951 centavos tanto na escrita quanto na leitura. O tempo total exato desde o backlog de 22.500 até zero não foi cronometrado. Esta é evidência local de drenagem e consistência eventual; não comprova failover, isolamento entre instâncias, capacidade em outra infraestrutura ou um SLA de produção.
+
 ### Base persistente de dados sintéticos para consulta
 
 Foi criado o banco dedicado `financial_read_loadtest` no container `financial-read-db`, separado do banco `financial_read` usado pela API ativa. Ele contém 1.000 contas sintéticas de leitura, distribuídas igualmente por `loadtest-customer-001` a `loadtest-customer-004` (250 contas por titular). A base foi verificada após duas execuções do seed: continua com 1.000 contas, enquanto o banco ativo permanece sem essas contas.
