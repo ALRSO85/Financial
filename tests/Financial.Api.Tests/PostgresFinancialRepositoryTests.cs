@@ -28,6 +28,7 @@ public sealed class PostgresFinancialRepositoryTests : IAsyncLifetime
 {
     private const int MaxTestPoolSize = 50;
     private readonly string? _adminConnectionString = Environment.GetEnvironmentVariable("FinancialTests__PostgresConnectionString");
+    private readonly string? _readAdminConnectionString = Environment.GetEnvironmentVariable("FinancialTests__ReadPostgresConnectionString");
     private NpgsqlDataSource _dataSource = null!;
     private NpgsqlDataSource _readDataSource = null!;
     private PostgresFinancialRepository _repository = null!;
@@ -42,6 +43,9 @@ public sealed class PostgresFinancialRepositoryTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         if (string.IsNullOrWhiteSpace(_adminConnectionString)) return;
+        var readAdminConnectionString = string.IsNullOrWhiteSpace(_readAdminConnectionString)
+            ? _adminConnectionString
+            : _readAdminConnectionString;
 
         _schema = $"financial_test_{Guid.NewGuid():N}";
         _readSchema = $"financial_read_test_{Guid.NewGuid():N}";
@@ -50,6 +54,10 @@ public sealed class PostgresFinancialRepositoryTests : IAsyncLifetime
             await admin.OpenAsync();
             await using var createSchema = new NpgsqlCommand($"CREATE SCHEMA \"{_schema}\"", admin);
             await createSchema.ExecuteNonQueryAsync();
+        }
+        await using (var admin = new NpgsqlConnection(readAdminConnectionString))
+        {
+            await admin.OpenAsync();
             await using var createReadSchema = new NpgsqlCommand($"CREATE SCHEMA \"{_readSchema}\"", admin);
             await createReadSchema.ExecuteNonQueryAsync();
         }
@@ -61,7 +69,7 @@ public sealed class PostgresFinancialRepositoryTests : IAsyncLifetime
         }.ConnectionString;
         _writeTestConnectionString = connection;
         _dataSource = NpgsqlDataSource.Create(connection);
-        var readConnection = new NpgsqlConnectionStringBuilder(_adminConnectionString)
+        var readConnection = new NpgsqlConnectionStringBuilder(readAdminConnectionString)
         {
             SearchPath = _readSchema,
             MaxPoolSize = MaxTestPoolSize
@@ -85,7 +93,10 @@ public sealed class PostgresFinancialRepositoryTests : IAsyncLifetime
             await admin.OpenAsync();
             await using var dropSchema = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{_schema}\" CASCADE", admin);
             await dropSchema.ExecuteNonQueryAsync();
-            await using var dropReadSchema = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{_readSchema}\" CASCADE", admin);
+            await using var readAdmin = new NpgsqlConnection(
+                string.IsNullOrWhiteSpace(_readAdminConnectionString) ? _adminConnectionString : _readAdminConnectionString);
+            await readAdmin.OpenAsync();
+            await using var dropReadSchema = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{_readSchema}\" CASCADE", readAdmin);
             await dropReadSchema.ExecuteNonQueryAsync();
         }
     }

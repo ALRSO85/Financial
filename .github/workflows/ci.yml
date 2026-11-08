@@ -8,7 +8,7 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     services:
-      postgres:
+      postgres-write:
         image: postgres:17-alpine
         env:
           POSTGRES_DB: financial
@@ -21,8 +21,22 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20
+      postgres-read:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: financial
+          POSTGRES_USER: financial
+          POSTGRES_PASSWORD: financial
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U financial -d financial"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
     env:
       FinancialTests__PostgresConnectionString: Host=localhost;Port=5432;Database=financial;Username=financial;Password=financial
+      FinancialTests__ReadPostgresConnectionString: Host=localhost;Port=5433;Database=financial;Username=financial;Password=financial
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
