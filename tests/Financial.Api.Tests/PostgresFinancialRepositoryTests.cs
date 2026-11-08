@@ -114,6 +114,86 @@ public sealed class PostgresFinancialRepositoryTests : IAsyncLifetime
     }
 
     [PostgresFact]
+    public async Task Concurrent_debits_from_independent_api_instances_preserve_the_account_balance()
+    {
+        var apiWriteConnectionString = new NpgsqlConnectionStringBuilder(_writeTestConnectionString)
+        {
+            MaxPoolSize = 10
+        }.ConnectionString;
+        var apiReadConnectionString = new NpgsqlConnectionStringBuilder(_readTestConnectionString)
+        {
+            MaxPoolSize = 10
+        }.ConnectionString;
+        var settings = new Dictionary<string, string?>
+        {
+            ["Financial__ApiRole"] = "write",
+            ["Financial__StorageProvider"] = "postgres",
+            ["ConnectionStrings__FinancialWrite"] = apiWriteConnectionString,
+            ["ConnectionStrings__FinancialRead"] = apiReadConnectionString,
+            ["Jwt__Issuer"] = "financial-availability-test",
+            ["Jwt__Audience"] = "financial-api-test",
+            ["Jwt__SigningKey"] = "availability-test-signing-key-with-at-least-32-bytes",
+            ["RateLimits__Global__TokenLimit"] = "10000",
+            ["RateLimits__Global__TokensPerPeriod"] = "10000",
+            ["RateLimits__Write__TokenLimit"] = "10000",
+            ["RateLimits__Write__TokensPerPeriod"] = "10000"
+        };
+        var previousSettings = settings.Keys.ToDictionary(key => key, Environment.GetEnvironmentVariable);
+
+        try
+        {
+            foreach (var (key, value) in settings)
+                Environment.SetEnvironmentVariable(key, value);
+
+            using var firstApi = new WebApplicationFactory<global::Program>().WithWebHostBuilder(builder =>
+                builder.UseEnvironment("Development"));
+            using var secondApi = new WebApplicationFactory<global::Program>().WithWebHostBuilder(builder =>
+                builder.UseEnvironment("Development"));
+            using var firstClient = firstApi.CreateClient();
+            using var secondClient = secondApi.CreateClient();
+            firstClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateToken("financial.write"));
+            secondClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateToken("financial.write"));
+
+            using var createResponse = await firstClient.PostAsync("/accounts", content: null);
+            Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+            var account = await JsonSerializer.DeserializeAsync<AccountResponse>(
+                await createResponse.Content.ReadAsStreamAsync(), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Assert.NotNull(account);
+            using var creditResponse = await firstClient.PostAsJsonAsync(
+                $"/accounts/{account.Id}/transactions",
+                new PostTransactionRequest("credit", 10_000, "two-instance-seed", "seed"));
+            Assert.Equal(HttpStatusCode.Created, creditResponse.StatusCode);
+
+            var results = await Task.WhenAll(Enumerable.Range(0, 100).Select(async index =>
+            {
+                var client = index % 2 == 0 ? firstClient : secondClient;
+                using var response = await client.PostAsJsonAsync(
+                    $"/accounts/{account.Id}/transactions",
+                    new PostTransactionRequest("debit", 200, $"two-instance-debit-{index}", null));
+                return (response.StatusCode, Body: response.StatusCode == HttpStatusCode.InternalServerError
+                    ? await response.Content.ReadAsStringAsync() : string.Empty);
+            }));
+
+            var snapshot = await _repository.LoadAsync(default);
+            var statusSummary = string.Join(", ", results.GroupBy(result => result.StatusCode)
+                .Select(group => $"{group.Key}: {group.Count()}"));
+            var serverErrors = string.Join(" | ", results.Where(result => result.StatusCode == HttpStatusCode.InternalServerError)
+                .Select(result => result.Body).Distinct());
+            Assert.True(results.Count(result => result.StatusCode == HttpStatusCode.Created) == 50,
+                $"Expected 50 successful debits, observed {statusSummary}. {serverErrors}");
+            Assert.True(results.Count(result => result.StatusCode == HttpStatusCode.UnprocessableEntity) == 50,
+                $"Expected 50 insufficient-funds responses, observed {statusSummary}. {serverErrors}");
+            Assert.Equal(51, snapshot.Entries.Count);
+            Assert.Equal(0, snapshot.Accounts.Single().Balance.Cents);
+        }
+        finally
+        {
+            foreach (var (key, value) in previousSettings)
+                Environment.SetEnvironmentVariable(key, value);
+        }
+    }
+
+    [PostgresFact]
     public async Task Concurrent_retries_create_one_ledger_entry_and_one_outbox_event()
     {
         var account = await _service.CreateAccountAsync("customer-123", default);
