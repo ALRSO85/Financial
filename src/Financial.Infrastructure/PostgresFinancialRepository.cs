@@ -132,8 +132,14 @@ public sealed class PostgresFinancialRepository(NpgsqlDataSource dataSource) : I
                 connection, transaction);
             command.Parameters.AddWithValue("account", accountId);
             command.Parameters.AddWithValue("created", createdAt.ToUniversalTime());
-            return (DateTimeOffset)(await command.ExecuteScalarAsync(cancellationToken)
-                ?? throw new InvalidDataException("Não foi possível obter o instante do último lançamento."));
+            var result = await command.ExecuteScalarAsync(cancellationToken)
+                ?? throw new InvalidDataException("Não foi possível obter o instante do último lançamento.");
+            return result switch
+            {
+                DateTimeOffset instant => instant,
+                DateTime instant => new DateTimeOffset(DateTime.SpecifyKind(instant, DateTimeKind.Utc)),
+                _ => throw new InvalidDataException("O banco retornou um tipo inválido para o instante do último lançamento.")
+            };
         }
 
         public async Task UpdateAccountAsync(Account account, CancellationToken cancellationToken)

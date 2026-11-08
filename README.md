@@ -118,7 +118,7 @@ dotnet test
 
 No Linux/macOS, exporte a mesma variável antes de executar `dotnet test`. O CI inicia um PostgreSQL efêmero e executa também esses testes.
 
-Os testes JSON cobrem regras de domínio, autenticação e contratos HTTP; os testes PostgreSQL exercitam concorrência entre conexões, idempotência, atomicidade da outbox e reprocessamento da projeção. Os testes de integração criam schemas isolados e removem esses schemas ao final.
+Os testes JSON cobrem regras de domínio, autenticação e contratos HTTP; os testes PostgreSQL exercitam concorrência entre conexões, idempotência, atomicidade da outbox e reprocessamento da projeção. Um teste HTTP publica uma movimentação, encerra o host da API de escrita e confirma que a API de leitura continua consultando o saldo consolidado projetado, mesmo com a conexão de escrita indisponível. Os testes de integração criam schemas isolados e removem esses schemas ao final.
 
 ## Organização do código
 

@@ -27,7 +27,7 @@ Este documento transforma o enunciado e a devolutiva da avaliação em requisito
 1. A confirmação de uma movimentação significa que lançamento, saldo contábil e evento na outbox foram gravados na mesma transação do banco de escrita.
 2. Repetir uma solicitação com a mesma chave e os mesmos dados retorna o resultado já confirmado. Reutilizar a chave com conteúdo diferente é conflito. A unicidade é garantida pelo banco, inclusive entre processos.
 3. A consulta consolidada usa uma projeção de leitura separada e é **eventualmente consistente**. Ela informa o instante/posição aplicada para que o cliente conheça a atualidade do dado.
-4. Com os componentes saudáveis, a meta provisória de atualização da projeção é até 60 segundos. Acima de 5 minutos, a API sinaliza estado degradado e a operação gera alerta. Esses limites precisam ser validados pelo negócio.
+4. Com os componentes saudáveis, a meta provisória de atualização da projeção é até 30 segundos, conforme o desafio revisado. Acima de 5 minutos, a API sinaliza estado degradado e a operação gera alerta. Esses limites precisam ser validados pelo negócio.
 5. Se a API de escrita ou o banco de escrita estiver indisponível, novas movimentações falham sem confirmação. A consulta continua atendendo a última projeção disponível e identifica que ela pode estar atrasada.
 6. Se a projeção de leitura estiver indisponível, a API de escrita continua aceitando movimentações confirmadas; elas permanecem na outbox até a projeção recuperar. A leitura não promete atualização enquanto estiver indisponível.
 7. Eventos são entregues pelo menos uma vez. O consumidor precisa ser idempotente; ordem e versão por conta evitam aplicar atualizações antigas sobre mais recentes.
@@ -41,7 +41,7 @@ Os valores são um cenário de dimensionamento e teste para a revisão técnica.
 | Disponibilidade mensal da API de escrita | 99,9% | Exclui manutenção aprovada; definição final depende do negócio. |
 | Disponibilidade mensal da consulta | 99,9% | O serviço de leitura deve ter implantação e armazenamento independentes da API de escrita. |
 | Latência de escrita | p95 ≤ 300 ms; p99 ≤ 1 s | Medida na API, sem contar latência do cliente. |
-| Latência de consulta | p95 ≤ 200 ms; p99 ≤ 500 ms | Consulta por conta e consolidada sob a carga de referência. |
+| Latência de consulta | p95 ≤ 500 ms; p99 ≤ 500 ms | Consulta por conta e consolidada sob a carga de referência; p95 alinhado ao desafio revisado. |
 | Carga de referência | 100 operações/s sustentadas; pico de 500 operações/s por 5 min | Premissa de teste, não volume fornecido pela empresa. |
 | Retenção de lançamentos | Permanente durante a vida da conta | Alteração requer política legal e de negócio; não apagar o ledger por política genérica de retenção. |
 | RPO de lançamentos confirmados | 0 | Uma resposta de sucesso só pode ocorrer após commit durável segundo a configuração de alta disponibilidade do banco. |

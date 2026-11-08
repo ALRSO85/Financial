@@ -13,6 +13,7 @@ using Xunit;
 
 namespace Financial.Api.Tests;
 
+[Collection(ProcessEnvironmentTestCollection.Name)]
 public sealed class AuthenticationTests : IAsyncLifetime
 {
     private const string Issuer = "financial-test-issuer";

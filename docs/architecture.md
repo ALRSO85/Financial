@@ -38,7 +38,7 @@ A API de leitura consulta apenas o banco projetado, que mantém contas, saldos a
 
 A consistência entre escrita e leitura é eventual. `dataAsOf` informa o instante mais recente aplicado à conta/projeção. O cliente deve tratar esse campo como atualidade da resposta e pode repetir a consulta após uma gravação. Com o projetor parado, a API de leitura continua atendendo a última projeção. O estado de health informa heartbeat, backlog e idade do evento pendente.
 
-O alvo proposto é aplicar eventos em até 60 segundos em condições normais e sinalizar degradação quando o evento pendente mais antigo passar de 5 minutos. Esses valores são premissas de avaliação; não foram medidos em carga e precisam de validação pelo negócio.
+O alvo proposto é aplicar eventos em até 30 segundos em condições normais e sinalizar degradação quando o evento pendente mais antigo passar de 5 minutos. O limite de 30 segundos está alinhado ao desafio revisado. Esses valores são premissas de avaliação; não foram medidos em carga e precisam de validação pelo negócio.
 
 ## Persistência e migrations
 

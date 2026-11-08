@@ -71,13 +71,19 @@ Alertas iniciais a configurar no backend:
 | Condição | Ação operacional |
 | --- | --- |
 | API ou PostgreSQL readiness unhealthy | Verificar processo, rede, pool e saúde do banco; manter escrita fechada se não houver commit confiável. |
-| Idade do evento pendente > 60 s | Investigar worker, conexões aos dois bancos e ritmo de processamento. |
+| Idade do evento pendente > 30 s | Investigar worker, conexões aos dois bancos e ritmo de processamento. |
 | Idade do evento pendente > 5 min | Declarar leitura degradada, acompanhar `dataAsOf` e escalar incidente. |
 | Dead letter > 0 | Corrigir causa, revisar evento com acesso controlado e reprocessar por procedimento auditado. |
 | Erros/latência acima dos SLOs assumidos | Correlacionar métricas, traces e logs; comparar volume/carga com a premissa validada. |
 | Falha de backup ou ensaio de restore | Tratar como incidente de proteção de dados; suspender a alegação de RPO/RTO até recuperar evidência. |
 
 Os nomes das métricas próprias estão listados em `architecture.md`. A tradução para nomes Prometheus/Datadog depende do collector e do backend escolhidos.
+
+### Exercício manual de indisponibilidade da escrita
+
+Em 08/11/2026, no ambiente local de desenvolvimento, foi criada uma conta de ensaio, registrado um crédito de 1.250 centavos e aguardada sua projeção. O container PostgreSQL de escrita foi parado enquanto a API de leitura e o banco de leitura permaneceram ativos. `GET /customers/me/balance` continuou retornando os 1.250 centavos projetados. O container de escrita foi reiniciado, voltou a `healthy`, e os registros da conta de ensaio foram removidos dos bancos. A verificação final confirmou os dois bancos `healthy`, as APIs com readiness `200` e nenhuma conta ou lançamento restante.
+
+Este exercício comprova a continuidade da leitura durante a parada controlada do container de escrita neste host. Foi uma execução manual, não um teste automatizado de CI; não mede failover, RTO/RPO, recuperação de desastre ou indisponibilidade física do servidor hospedeiro.
 
 ## Troubleshooting
 
