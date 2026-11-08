@@ -91,6 +91,8 @@ Em 08/11/2026, no ambiente local de desenvolvimento, foi criada uma conta de ens
 
 Este exercício comprova a continuidade da leitura durante a parada controlada do container de escrita neste host. Foi uma execução manual, não um teste automatizado de CI; não mede failover, RTO/RPO, recuperação de desastre ou indisponibilidade física do servidor hospedeiro.
 
+Em 08/11/2026, a suíte `PostgresFinancialRepositoryTests` também foi executada contra o banco dedicado `financial_write_loadtest`, criando schemas temporários e removendo-os ao final. Os cinco testes passaram, incluindo a leitura consolidada após o encerramento da API de escrita, leitura sem conexão de escrita, replay idempotente da projeção, concorrência entre débitos e retries idempotentes. Isso automatiza parte da evidência de isolamento lógico e consistência, mas não simula queda do servidor PostgreSQL, múltiplas instâncias de API ou failover de infraestrutura.
+
 ### Sondagem manual de latência da consulta
 
 Em 08/11/2026, a API de leitura local foi chamada 100 vezes em `GET /customers/me/balance`, com JWT de desenvolvimento, concorrência máxima de 10 e uma conta sintética de saldo zero na projeção. Todas as respostas foram `200`; latências observadas: p50 11,79 ms, p95 54,45 ms, p99 60,89 ms e máximo 61,92 ms. A conta e as 100 linhas de auditoria do ensaio foram removidas; a verificação final encontrou zero registros de ensaio.
