@@ -49,6 +49,12 @@ docker exec $container pg_restore -U financial -d financial --clean --if-exists 
 
 Após restore, valide migrations, contagem de contas/lançamentos, constraints, saldos reconciliados contra a soma dos lançamentos e a possibilidade de registrar uma movimentação de teste. Depois, restaure/reconstrua a projeção e confirme `dataAsOf` e backlog. Registre duração e resultado para comparar com RTO/RPO propostos.
 
+### Ensaio manual de backup e restore
+
+Em 08/11/2026, foi criado um dump custom-format do banco de escrita `financial` no container `financial-write-db` e restaurado em um banco descartável separado, no mesmo container. A validação encontrou as mesmas cinco tabelas públicas e duas migrations; as contagens de contas, lançamentos, outbox e auditoria foram iguais (`0` em ambas as bases). O banco descartável e o dump temporário foram removidos após a comparação. Os dois bancos permaneceram `healthy` e as APIs de escrita e leitura responderam `200` em readiness.
+
+Este ensaio confirma a execução básica de `pg_dump`/`pg_restore` para um banco vazio. Não valida restauração de lançamentos reais, reconciliação de saldos, recuperação da projeção, duração/RTO, PITR, criptografia ou cópia fora do host. Um ensaio com dados representativos e em infraestrutura isolada continua necessário antes de atribuir garantias operacionais ao backup.
+
 ### Reconstruir a projeção de leitura local
 
 Pare manualmente o `Financial.Projector.Worker`. O procedimento limpa as tabelas de projeção e reaplica todos os eventos da outbox; as tabelas de auditoria permanecem intactas. No PowerShell, revise o destino e confirme a operação:
@@ -84,6 +90,50 @@ Os nomes das métricas próprias estão listados em `architecture.md`. A traduç
 Em 08/11/2026, no ambiente local de desenvolvimento, foi criada uma conta de ensaio, registrado um crédito de 1.250 centavos e aguardada sua projeção. O container PostgreSQL de escrita foi parado enquanto a API de leitura e o banco de leitura permaneceram ativos. `GET /customers/me/balance` continuou retornando os 1.250 centavos projetados. O container de escrita foi reiniciado, voltou a `healthy`, e os registros da conta de ensaio foram removidos dos bancos. A verificação final confirmou os dois bancos `healthy`, as APIs com readiness `200` e nenhuma conta ou lançamento restante.
 
 Este exercício comprova a continuidade da leitura durante a parada controlada do container de escrita neste host. Foi uma execução manual, não um teste automatizado de CI; não mede failover, RTO/RPO, recuperação de desastre ou indisponibilidade física do servidor hospedeiro.
+
+### Sondagem manual de latência da consulta
+
+Em 08/11/2026, a API de leitura local foi chamada 100 vezes em `GET /customers/me/balance`, com JWT de desenvolvimento, concorrência máxima de 10 e uma conta sintética de saldo zero na projeção. Todas as respostas foram `200`; latências observadas: p50 11,79 ms, p95 54,45 ms, p99 60,89 ms e máximo 61,92 ms. A conta e as 100 linhas de auditoria do ensaio foram removidas; a verificação final encontrou zero registros de ensaio.
+
+Esta sondagem indica que a rota respondeu abaixo da premissa p95 de 500 ms neste ambiente e nesta amostra. Não é um teste sustentado, não representa volume ou crescimento do ledger, não mede 100 operações/s nem o pico proposto e não deve ser tratado como SLO validado. Repetir com conjunto representativo, gerador dedicado, duração definida e métricas do banco antes de concluir capacidade.
+
+Em seguida, em 08/11/2026, foi executado um ensaio sustentado de 60 segundos com 1.000 contas sintéticas na projeção de leitura, distribuídas entre quatro titulares (250 contas por titular). Foram feitas 900 consultas autenticadas a `GET /customers/me/balance`, em cadência de aproximadamente 15 requisições/s e concorrência máxima de 4. Todas retornaram `200`; latências observadas: p50 19,19 ms, p95 33,70 ms, p99 44,13 ms e média 20,57 ms. As 1.000 contas e 900 registros de auditoria foram removidos; a verificação final encontrou zero registros do ensaio.
+
+O p95 ficou abaixo da premissa de 500 ms nesta carga e neste conjunto. A configuração atual permite 1.000 requisições/minuto por IP de cliente e 300/minuto por titular; por isso, o cenário proposto de 100 operações/s não pode ser validado por um único gerador/origem com a configuração atual. O ensaio não representa 100 operações/s, o pico de 500 operações/s, a carga de escrita, duração longa, ou crescimento de lançamentos. Antes de usar essas metas como critério de aceite, validar a política de rate limit com o negócio e executar um teste distribuído/provisionado que não mascare saturação com rejeições `429`.
+
+Para permitir um ensaio isolado de 100 consultas/s sem alterar os padrões normais, os limites agora podem ser sobrescritos por configuração (`RateLimits:Global`, `RateLimits:Read`, `RateLimits:Write`). Em 08/11/2026, a API de leitura foi iniciada em instância separada, na porta local `5083`, apontando para `financial_read_loadtest`; somente nela foram configurados limites de 10.000 tokens por minuto para o teto global e leitura. Com 1.000 contas sintéticas (250 para o titular consultado), foram feitas 6.000 chamadas a `GET /customers/me/balance` em 59,24 s: 101,28 chamadas/s, todas `200`, p50 17,93 ms, p95 30,49 ms, p99 65,34 ms e máximo 149,04 ms. O ensaio deixou zero registros de auditoria após limpeza; as contas sintéticas permanecem no banco dedicado. A instância temporária foi encerrada e os limites padrão das APIs normais não foram alterados.
+
+Este resultado demonstra a rota de consulta e a projeção sintética neste host para aproximadamente 100 chamadas/s por um minuto. Não valida escrita sob carga, topologia distribuída, saturação prolongada ou disponibilidade em múltiplos hosts. Os limites são locais por processo e precisam ser calibrados e complementados no gateway antes de produção.
+
+Em 08/11/2026, foi feito o ensaio de pico proposto por cinco minutos na mesma instância e base isoladas, agora com limites elevados somente no processo de teste para 200.000 tokens/minuto nos limiters global e de leitura. Foram concluídas 150.000 consultas a `GET /customers/me/balance` em 300,52 s (499,14 chamadas/s); todas retornaram `200`, sem `429`. Latências: p50 21,25 ms, p95 35,38 ms, p99 85,91 ms, média 24,21 ms e máximo 857,76 ms. Nos pontos de amostragem, o container PostgreSQL variou de 62% a 71% de CPU e de 140 MiB a 167 MiB de memória; `blks_read` permaneceu em 13. A auditoria do ensaio foi apagada, as 1.000 contas de fixture permaneceram, e as APIs normais e os dois bancos continuaram saudáveis.
+
+O endpoint de prontidão da instância de ensaio marcou a projeção como `Degraded` porque nenhum projetor foi conectado à base de carga; o status HTTP permaneceu `200` e as consultas de saldo foram atendidas. Assim, o ensaio mede o caminho HTTP e a consulta agregada sobre a réplica já populada, mas não o pipeline completo de escrita/outbox/projeção. O resultado é evidência local para a leitura em torno de 500 chamadas/s, não garantia de capacidade de produção; o máximo isolado de 857,76 ms também deve ser investigado em repetição com tracing e medição do lado do banco.
+
+### Carga de escrita e projeção ponta a ponta
+
+Em 08/11/2026, a API de escrita isolada registrou 6.000 créditos de um centavo em `financial_write_loadtest`, distribuídos por 10 contas; o projetor independente consumiu a outbox e a API de leitura serviu `financial_read_pipeline_test`. Os limiters da instância de ensaio foram elevados por configuração, sem alterar os padrões das APIs normais. Todas as operações de escrita retornaram `201`: 102,48/s durante 58,55 s, p50 28,32 ms, p95 52,99 ms, p99 154,57 ms e máximo 466,91 ms.
+
+O saldo agregado esperado e observado após a projeção foi 93.500 centavos para as 10 contas, reconciliado com 6.020 lançamentos no total. A outbox manteve 6.030 eventos (incluindo a carga inicial) e chegou a zero pendentes; durante a carga foram observados 1.801 pendentes aos 30 s e 1.810 ao fim, depois o backlog caiu para 710 e finalmente zero. O tempo exato de drenagem não foi instrumentado. Readiness das duas APIs isoladas ficou `Healthy` com o worker ativo. As APIs de teste e o worker foram encerrados; os bancos dedicados e os lançamentos sintéticos permanecem para repetição, sem dados na base financeira ativa.
+
+Este ensaio mostra o caminho transacional e a projeção eventual a aproximadamente 100 escritas/s neste host e com 10 contas. Não comprova o pico de 500 escritas/s, múltiplas instâncias, falha de processo durante commit, nem capacidade sob crescimento prolongado ou infraestrutura distribuída. O aumento temporário dos limiters serviu apenas para o ensaio isolado.
+
+### Base persistente de dados sintéticos para consulta
+
+Foi criado o banco dedicado `financial_read_loadtest` no container `financial-read-db`, separado do banco `financial_read` usado pela API ativa. Ele contém 1.000 contas sintéticas de leitura, distribuídas igualmente por `loadtest-customer-001` a `loadtest-customer-004` (250 contas por titular). A base foi verificada após duas execuções do seed: continua com 1.000 contas, enquanto o banco ativo permanece sem essas contas.
+
+Para recriar ou atualizar os fixtures, execute no PowerShell com acesso SSH ao servidor:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\Seed-FinancialReadLoadTest.ps1
+```
+
+O script cria a base e copia apenas o schema de leitura quando ela ainda não existe; os dados são idempotentes e mantidos no banco dedicado. O SQL recusa execução em qualquer banco cujo nome não seja `financial_read_loadtest`. Os fixtures populam somente a projeção de contas, não o ledger, entries ou outbox; servem para exercitar agregação e latência de leitura, não consistência financeira ponta a ponta. Para um teste pela API, configure uma instância isolada com `ConnectionStrings__FinancialRead` apontando para `financial_read_loadtest`; não repontar a API compartilhada durante uso normal.
+
+### Restore com ledger sintético não vazio
+
+Em 08/11/2026, foi criado o banco isolado `financial_write_loadtest` e a API de escrita temporária foi iniciada apenas em `localhost:5082`. Pela API foram registradas 10 contas, cada uma com crédito de 10.000 centavos e débito de 1.250 centavos. O banco manteve 20 lançamentos, 30 eventos de outbox, 30 eventos de auditoria e duas migrations; o total dos saldos (87.500 centavos) conferiu com a soma dos valores assinados dos lançamentos. As três constraints verificadas para valor assinado, idempotência e instante por conta estavam presentes.
+
+O banco foi exportado com `pg_dump` e restaurado em uma base descartável no mesmo container. Contagens, constraints e reconciliação de saldo foram iguais entre origem e restauração. A base de restauração e o dump temporário foram removidos; `financial_write_loadtest` permanece para ensaios futuros, e a API temporária foi encerrada. Este ensaio valida restore lógico de um ledger sintético não vazio; não mede duração de RTO, PITR, cópia fora do host nem recuperação de infraestrutura independente.
 
 ## Troubleshooting
 

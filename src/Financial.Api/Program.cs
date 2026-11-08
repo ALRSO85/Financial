@@ -120,33 +120,42 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("financial.read", policy => policy.RequireAuthenticatedUser().RequireAssertion(context => HasScope(context.User, "financial.read")));
     options.AddPolicy("financial.write", policy => policy.RequireAuthenticatedUser().RequireAssertion(context => HasScope(context.User, "financial.write")));
 });
+var globalRateLimit = ReadPositiveInt(builder.Configuration, "RateLimits:Global:TokenLimit", 1000);
+var globalTokensPerPeriod = ReadPositiveInt(builder.Configuration, "RateLimits:Global:TokensPerPeriod", 1000);
+var globalPeriodSeconds = ReadPositiveInt(builder.Configuration, "RateLimits:Global:ReplenishmentPeriodSeconds", 60);
+var readRateLimit = ReadPositiveInt(builder.Configuration, "RateLimits:Read:TokenLimit", 300);
+var readTokensPerPeriod = ReadPositiveInt(builder.Configuration, "RateLimits:Read:TokensPerPeriod", 300);
+var readPeriodSeconds = ReadPositiveInt(builder.Configuration, "RateLimits:Read:ReplenishmentPeriodSeconds", 60);
+var writeRateLimit = ReadPositiveInt(builder.Configuration, "RateLimits:Write:TokenLimit", 60);
+var writeTokensPerPeriod = ReadPositiveInt(builder.Configuration, "RateLimits:Write:TokensPerPeriod", 60);
+var writePeriodSeconds = ReadPositiveInt(builder.Configuration, "RateLimits:Write:ReplenishmentPeriodSeconds", 60);
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
         RateLimitPartition.GetTokenBucketLimiter(GetClientRateLimitKey(context), _ => new TokenBucketRateLimiterOptions
         {
-            TokenLimit = 1000,
-            TokensPerPeriod = 1000,
-            ReplenishmentPeriod = TimeSpan.FromMinutes(1),
+            TokenLimit = globalRateLimit,
+            TokensPerPeriod = globalTokensPerPeriod,
+            ReplenishmentPeriod = TimeSpan.FromSeconds(globalPeriodSeconds),
             AutoReplenishment = true,
             QueueLimit = 0
         }));
     options.AddPolicy("financial.read", context => RateLimitPartition.GetTokenBucketLimiter(GetRateLimitKey(context), _ =>
         new TokenBucketRateLimiterOptions
         {
-            TokenLimit = 300,
-            TokensPerPeriod = 300,
-            ReplenishmentPeriod = TimeSpan.FromMinutes(1),
+            TokenLimit = readRateLimit,
+            TokensPerPeriod = readTokensPerPeriod,
+            ReplenishmentPeriod = TimeSpan.FromSeconds(readPeriodSeconds),
             AutoReplenishment = true,
             QueueLimit = 0
         }));
     options.AddPolicy("financial.write", context => RateLimitPartition.GetTokenBucketLimiter(GetRateLimitKey(context), _ =>
         new TokenBucketRateLimiterOptions
         {
-            TokenLimit = 60,
-            TokensPerPeriod = 60,
-            ReplenishmentPeriod = TimeSpan.FromMinutes(1),
+            TokenLimit = writeRateLimit,
+            TokensPerPeriod = writeTokensPerPeriod,
+            ReplenishmentPeriod = TimeSpan.FromSeconds(writePeriodSeconds),
             AutoReplenishment = true,
             QueueLimit = 0
         }));
@@ -175,6 +184,14 @@ if (!string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOIN
 
 static string GetRateLimitKey(HttpContext context) =>
     context.User.FindFirst("sub")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+static int ReadPositiveInt(IConfiguration configuration, string key, int defaultValue)
+{
+    var value = configuration.GetValue<int?>(key) ?? defaultValue;
+    return value > 0
+        ? value
+        : throw new InvalidOperationException($"A configuração {key} deve ser maior que zero.");
+}
 
 static string GetClientRateLimitKey(HttpContext context) =>
     context.Connection.RemoteIpAddress?.ToString() ?? "unknown";

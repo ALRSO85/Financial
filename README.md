@@ -120,6 +120,8 @@ No Linux/macOS, exporte a mesma variável antes de executar `dotnet test`. O CI 
 
 Os testes JSON cobrem regras de domínio, autenticação e contratos HTTP; os testes PostgreSQL exercitam concorrência entre conexões, idempotência, atomicidade da outbox e reprocessamento da projeção. Um teste HTTP publica uma movimentação, encerra o host da API de escrita e confirma que a API de leitura continua consultando o saldo consolidado projetado, mesmo com a conexão de escrita indisponível. Os testes de integração criam schemas isolados e removem esses schemas ao final.
 
+Para ensaios de leitura, `scripts/Seed-FinancialReadLoadTest.ps1` prepara fixtures sintéticos persistentes em um banco PostgreSQL dedicado, separado da base usada pela API ativa. A base contém 1.000 contas em quatro titulares e não representa o ledger de escrita; consulte o procedimento e as limitações em [`docs/runbook.md`](docs/runbook.md).
+
 ## Organização do código
 
 ```text
