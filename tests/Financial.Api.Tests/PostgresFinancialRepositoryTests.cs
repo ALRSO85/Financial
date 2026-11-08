@@ -1,7 +1,9 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Net.Sockets;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
@@ -191,6 +193,136 @@ public sealed class PostgresFinancialRepositoryTests : IAsyncLifetime
             foreach (var (key, value) in previousSettings)
                 Environment.SetEnvironmentVariable(key, value);
         }
+    }
+
+    [PostgresFact]
+    public async Task Concurrent_debits_from_separate_api_processes_preserve_the_account_balance()
+    {
+        var apiWriteConnectionString = new NpgsqlConnectionStringBuilder(_writeTestConnectionString)
+        {
+            MaxPoolSize = 10
+        }.ConnectionString;
+        var apiReadConnectionString = new NpgsqlConnectionStringBuilder(_readTestConnectionString)
+        {
+            MaxPoolSize = 10
+        }.ConnectionString;
+        var firstPort = GetAvailablePort();
+        var secondPort = GetAvailablePort();
+        while (secondPort == firstPort) secondPort = GetAvailablePort();
+        var firstUri = new Uri($"http://127.0.0.1:{firstPort}");
+        var secondUri = new Uri($"http://127.0.0.1:{secondPort}");
+        var firstProcess = StartApiProcess(firstUri, apiWriteConnectionString, apiReadConnectionString);
+        var secondProcess = StartApiProcess(secondUri, apiWriteConnectionString, apiReadConnectionString);
+
+        try
+        {
+            using var firstClient = await WaitForApiAsync(firstProcess, firstUri);
+            using var secondClient = await WaitForApiAsync(secondProcess, secondUri);
+            firstClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateToken("financial.write"));
+            secondClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateToken("financial.write"));
+
+            using var createResponse = await firstClient.PostAsync("/accounts", content: null);
+            Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+            var account = await JsonSerializer.DeserializeAsync<AccountResponse>(
+                await createResponse.Content.ReadAsStreamAsync(), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Assert.NotNull(account);
+            using var creditResponse = await firstClient.PostAsJsonAsync(
+                $"/accounts/{account.Id}/transactions",
+                new PostTransactionRequest("credit", 10_000, "two-process-seed", "seed"));
+            Assert.Equal(HttpStatusCode.Created, creditResponse.StatusCode);
+
+            var results = await Task.WhenAll(Enumerable.Range(0, 100).Select(async index =>
+            {
+                var client = index % 2 == 0 ? firstClient : secondClient;
+                using var response = await client.PostAsJsonAsync(
+                    $"/accounts/{account.Id}/transactions",
+                    new PostTransactionRequest("debit", 200, $"two-process-debit-{index}", null));
+                return response.StatusCode;
+            }));
+
+            var snapshot = await _repository.LoadAsync(default);
+            Assert.Equal(50, results.Count(status => status == HttpStatusCode.Created));
+            Assert.Equal(50, results.Count(status => status == HttpStatusCode.UnprocessableEntity));
+            Assert.Equal(51, snapshot.Entries.Count);
+            Assert.Equal(0, snapshot.Accounts.Single().Balance.Cents);
+        }
+        finally
+        {
+            await StopApiProcessAsync(firstProcess);
+            await StopApiProcessAsync(secondProcess);
+        }
+    }
+
+    private static int GetAvailablePort()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        return ((IPEndPoint)listener.LocalEndpoint).Port;
+    }
+
+    private static Process StartApiProcess(Uri address, string writeConnectionString, string readConnectionString)
+    {
+        var apiAssemblyPath = typeof(global::Program).Assembly.Location;
+        var startInfo = new ProcessStartInfo("dotnet")
+        {
+            WorkingDirectory = Path.GetDirectoryName(apiAssemblyPath)!,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        startInfo.ArgumentList.Add(apiAssemblyPath);
+        startInfo.Environment["DOTNET_ENVIRONMENT"] = "Development";
+        startInfo.Environment["ASPNETCORE_URLS"] = address.ToString();
+        startInfo.Environment["Financial__ApiRole"] = "write";
+        startInfo.Environment["Financial__StorageProvider"] = "postgres";
+        startInfo.Environment["ConnectionStrings__FinancialWrite"] = writeConnectionString;
+        startInfo.Environment["ConnectionStrings__FinancialRead"] = readConnectionString;
+        startInfo.Environment["Jwt__Issuer"] = "financial-availability-test";
+        startInfo.Environment["Jwt__Audience"] = "financial-api-test";
+        startInfo.Environment["Jwt__SigningKey"] = "availability-test-signing-key-with-at-least-32-bytes";
+        startInfo.Environment["RateLimits__Global__TokenLimit"] = "10000";
+        startInfo.Environment["RateLimits__Global__TokensPerPeriod"] = "10000";
+        startInfo.Environment["RateLimits__Write__TokenLimit"] = "10000";
+        startInfo.Environment["RateLimits__Write__TokensPerPeriod"] = "10000";
+        startInfo.Environment["Logging__LogLevel__Default"] = "Warning";
+
+        var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Não foi possível iniciar o processo da API para o teste.");
+        _ = process.StandardOutput.ReadToEndAsync();
+        _ = process.StandardError.ReadToEndAsync();
+        return process;
+    }
+
+    private static async Task<HttpClient> WaitForApiAsync(Process process, Uri address)
+    {
+        using var client = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(2) };
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (process.HasExited)
+                throw new InvalidOperationException($"O processo da API encerrou antes de ficar pronto (exit code {process.ExitCode}).");
+            try
+            {
+                using var response = await client.GetAsync("/health/live");
+                if (response.IsSuccessStatusCode)
+                    return new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(10) };
+            }
+            catch (HttpRequestException) { }
+            catch (TaskCanceledException) { }
+            await Task.Delay(200);
+        }
+        throw new TimeoutException($"A API de teste não ficou pronta em {address}.");
+    }
+
+    private static async Task StopApiProcessAsync(Process process)
+    {
+        if (!process.HasExited)
+        {
+            process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+        }
+        process.Dispose();
     }
 
     [PostgresFact]
