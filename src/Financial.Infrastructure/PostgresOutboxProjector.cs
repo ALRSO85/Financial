@@ -8,7 +8,7 @@ namespace Financial.Infrastructure;
 public sealed class PostgresOutboxProjector(NpgsqlDataSource writeDataSource, NpgsqlDataSource readDataSource)
 {
     private const long ProjectorLockId = 8_416_072_311;
-    private const int BatchSize = 100;
+    private const int BatchSize = 500;
     private static readonly Meter Meter = new("Financial.Infrastructure", "1.0.0");
     private static readonly ActivitySource ActivitySource = new("Financial.Infrastructure");
     private static readonly Counter<long> ProjectedEvents = Meter.CreateCounter<long>("financial.projection.events");
@@ -63,11 +63,97 @@ public sealed class PostgresOutboxProjector(NpgsqlDataSource writeDataSource, Np
 
         await using var readConnection = await readDataSource.OpenConnectionAsync(cancellationToken);
         await using var readTransaction = await readConnection.BeginTransactionAsync(cancellationToken);
+        var eventsJson = JsonSerializer.Serialize(pendingEvents.Select(pendingEvent =>
+        {
+            using var payload = JsonDocument.Parse(pendingEvent.Payload);
+            return new
+            {
+                event_id = pendingEvent.Id,
+                event_type = pendingEvent.Type,
+                payload = payload.RootElement.Clone(),
+                created_at = pendingEvent.CreatedAt.ToUniversalTime()
+            };
+        }));
         await using (var batch = new NpgsqlBatch(readConnection, readTransaction))
         {
-            foreach (var pendingEvent in pendingEvents)
-                foreach (var command in CreateApplyCommands(pendingEvent))
-                    batch.BatchCommands.Add(command);
+            var appliedAt = DateTimeOffset.UtcNow;
+            batch.BatchCommands.Add(CreateBatchCommand("""
+                INSERT INTO financial_projected_events (event_id, projected_at)
+                SELECT event_id, @appliedAt
+                FROM jsonb_to_recordset(@events::jsonb) AS e(event_id uuid, event_type text, payload jsonb, created_at timestamptz)
+                ON CONFLICT DO NOTHING
+                """, eventsJson, appliedAt));
+            batch.BatchCommands.Add(CreateBatchCommand("""
+                INSERT INTO financial_read_accounts
+                    (account_id, owner_reference, created_at, balance_cents, last_occurred_at, last_applied_at)
+                SELECT (payload ->> 'accountId')::uuid,
+                       payload ->> 'ownerReference',
+                       (payload ->> 'createdAt')::timestamptz,
+                       (payload ->> 'balanceInCents')::bigint,
+                       NULL,
+                       created_at
+                FROM jsonb_to_recordset(@events::jsonb) AS e(event_id uuid, event_type text, payload jsonb, created_at timestamptz)
+                WHERE event_type = 'account.opened'
+                ON CONFLICT (account_id) DO NOTHING
+                """, eventsJson));
+            batch.BatchCommands.Add(CreateBatchCommand("""
+                WITH events AS (
+                    SELECT DISTINCT ON ((payload ->> 'accountId')::uuid)
+                           payload, created_at,
+                           (payload ->> 'occurredAt')::timestamptz AS occurred_at
+                    FROM jsonb_to_recordset(@events::jsonb) AS e(event_id uuid, event_type text, payload jsonb, created_at timestamptz)
+                    WHERE event_type = 'transaction.posted'
+                    ORDER BY (payload ->> 'accountId')::uuid,
+                             (payload ->> 'occurredAt')::timestamptz DESC
+                )
+                INSERT INTO financial_read_accounts
+                    (account_id, owner_reference, created_at, balance_cents, last_occurred_at, last_applied_at)
+                SELECT (payload ->> 'accountId')::uuid,
+                       payload ->> 'ownerReference',
+                       (payload ->> 'createdAt')::timestamptz,
+                       (payload ->> 'balanceInCents')::bigint,
+                       occurred_at,
+                       created_at
+                FROM events
+                ON CONFLICT (account_id) DO UPDATE SET
+                    balance_cents = EXCLUDED.balance_cents,
+                    last_occurred_at = EXCLUDED.last_occurred_at,
+                    last_applied_at = EXCLUDED.last_applied_at
+                WHERE financial_read_accounts.last_occurred_at IS NULL
+                   OR EXCLUDED.last_occurred_at > financial_read_accounts.last_occurred_at
+                """, eventsJson));
+            batch.BatchCommands.Add(CreateBatchCommand("""
+                INSERT INTO financial_read_entries
+                    (entry_id, account_id, entry_type, amount_cents, signed_amount_cents, idempotency_key, description, occurred_at)
+                SELECT (payload ->> 'transactionId')::uuid,
+                       (payload ->> 'accountId')::uuid,
+                       payload ->> 'type',
+                       (payload ->> 'amountInCents')::bigint,
+                       (payload ->> 'signedAmountInCents')::bigint,
+                       payload ->> 'idempotencyKey',
+                       payload ->> 'description',
+                       (payload ->> 'occurredAt')::timestamptz
+                FROM jsonb_to_recordset(@events::jsonb) AS e(event_id uuid, event_type text, payload jsonb, created_at timestamptz)
+                WHERE event_type = 'transaction.posted'
+                ON CONFLICT DO NOTHING
+                """, eventsJson));
+            batch.BatchCommands.Add(CreateBatchCommand("""
+                WITH events AS (
+                    SELECT event_id, created_at
+                    FROM jsonb_to_recordset(@events::jsonb) AS e(event_id uuid, event_type text, payload jsonb, created_at timestamptz)
+                    ORDER BY created_at DESC, event_id DESC
+                    LIMIT 1
+                )
+                INSERT INTO financial_projection_checkpoint
+                    (checkpoint_id, last_event_created_at, last_event_id, updated_at)
+                SELECT 1, created_at, event_id, @appliedAt FROM events
+                ON CONFLICT (checkpoint_id) DO UPDATE SET
+                    last_event_created_at = EXCLUDED.last_event_created_at,
+                    last_event_id = EXCLUDED.last_event_id,
+                    updated_at = EXCLUDED.updated_at
+                WHERE (financial_projection_checkpoint.last_event_created_at, financial_projection_checkpoint.last_event_id)
+                    < (EXCLUDED.last_event_created_at, EXCLUDED.last_event_id)
+                """, eventsJson, appliedAt));
             await batch.ExecuteNonQueryAsync(cancellationToken);
         }
         await readTransaction.CommitAsync(cancellationToken);
@@ -155,77 +241,13 @@ public sealed class PostgresOutboxProjector(NpgsqlDataSource writeDataSource, Np
             reader.IsDBNull(2) ? null : reader.GetFieldValue<DateTimeOffset>(2));
     }
 
-    private static IReadOnlyList<NpgsqlBatchCommand> CreateApplyCommands(PendingEvent pendingEvent)
+    private static NpgsqlBatchCommand CreateBatchCommand(string commandText, string eventsJson, DateTimeOffset? appliedAt = null)
     {
-        using var document = JsonDocument.Parse(pendingEvent.Payload);
-        var payload = document.RootElement;
-        var appliedAt = DateTimeOffset.UtcNow;
-        var commands = new List<NpgsqlBatchCommand>();
-        var record = new NpgsqlBatchCommand("INSERT INTO financial_projected_events (event_id, projected_at) VALUES (@eventId, @appliedAt) ON CONFLICT DO NOTHING");
-        record.Parameters.AddWithValue("eventId", pendingEvent.Id);
-        record.Parameters.AddWithValue("appliedAt", appliedAt);
-        commands.Add(record);
-        if (pendingEvent.Type == "account.opened")
-        {
-            var account = new NpgsqlBatchCommand("INSERT INTO financial_read_accounts " +
-                "(account_id, owner_reference, created_at, balance_cents, last_occurred_at, last_applied_at) " +
-                "VALUES (@accountId, @owner, @created, @balance, NULL, @appliedAt) ON CONFLICT (account_id) DO NOTHING");
-            account.Parameters.AddWithValue("accountId", payload.GetProperty("accountId").GetGuid());
-            account.Parameters.AddWithValue("owner", payload.GetProperty("ownerReference").GetString()!);
-            account.Parameters.AddWithValue("created", payload.GetProperty("createdAt").GetDateTimeOffset().ToUniversalTime());
-            account.Parameters.AddWithValue("balance", payload.GetProperty("balanceInCents").GetInt64());
-            account.Parameters.AddWithValue("appliedAt", appliedAt);
-            commands.Add(account);
-        }
-        else if (pendingEvent.Type == "transaction.posted")
-        {
-            var accountId = payload.GetProperty("accountId").GetGuid();
-            var occurredAt = payload.GetProperty("occurredAt").GetDateTimeOffset().ToUniversalTime();
-            var account = new NpgsqlBatchCommand("INSERT INTO financial_read_accounts " +
-                "(account_id, owner_reference, created_at, balance_cents, last_occurred_at, last_applied_at) " +
-                "VALUES (@accountId, @owner, @created, @balance, @occurred, @appliedAt) " +
-                "ON CONFLICT (account_id) DO UPDATE SET balance_cents = EXCLUDED.balance_cents, " +
-                "last_occurred_at = EXCLUDED.last_occurred_at, last_applied_at = EXCLUDED.last_applied_at " +
-                "WHERE financial_read_accounts.last_occurred_at IS NULL OR " +
-                "EXCLUDED.last_occurred_at > financial_read_accounts.last_occurred_at");
-            account.Parameters.AddWithValue("accountId", accountId);
-            account.Parameters.AddWithValue("owner", payload.GetProperty("ownerReference").GetString()!);
-            account.Parameters.AddWithValue("created", payload.GetProperty("createdAt").GetDateTimeOffset().ToUniversalTime());
-            account.Parameters.AddWithValue("balance", payload.GetProperty("balanceInCents").GetInt64());
-            account.Parameters.AddWithValue("occurred", occurredAt);
-            account.Parameters.AddWithValue("appliedAt", appliedAt);
-            commands.Add(account);
-
-            var entry = new NpgsqlBatchCommand("INSERT INTO financial_read_entries " +
-                "(entry_id, account_id, entry_type, amount_cents, signed_amount_cents, idempotency_key, description, occurred_at) " +
-                "VALUES (@transactionId, @accountId, @entryType, @amount, @signed, @key, @description, @occurred) ON CONFLICT DO NOTHING");
-            entry.Parameters.AddWithValue("transactionId", payload.GetProperty("transactionId").GetGuid());
-            entry.Parameters.AddWithValue("accountId", accountId);
-            entry.Parameters.AddWithValue("entryType", payload.GetProperty("type").GetString()!);
-            entry.Parameters.AddWithValue("amount", payload.GetProperty("amountInCents").GetInt64());
-            entry.Parameters.AddWithValue("signed", payload.GetProperty("signedAmountInCents").GetInt64());
-            entry.Parameters.AddWithValue("key", payload.GetProperty("idempotencyKey").GetString()!);
-            var description = payload.GetProperty("description");
-            entry.Parameters.AddWithValue("description", description.ValueKind == JsonValueKind.Null
-                ? DBNull.Value : description.GetString()!);
-            entry.Parameters.AddWithValue("occurred", occurredAt);
-            commands.Add(entry);
-        }
-        else
-        {
-            throw new InvalidDataException($"Tipo de evento desconhecido na outbox: {pendingEvent.Type}.");
-        }
-
-        var checkpoint = new NpgsqlBatchCommand("INSERT INTO financial_projection_checkpoint (checkpoint_id, last_event_created_at, last_event_id, updated_at) " +
-            "VALUES (1, @eventCreated, @eventId, @appliedAt) ON CONFLICT (checkpoint_id) DO UPDATE SET " +
-            "last_event_created_at = EXCLUDED.last_event_created_at, last_event_id = EXCLUDED.last_event_id, updated_at = EXCLUDED.updated_at " +
-            "WHERE (financial_projection_checkpoint.last_event_created_at, financial_projection_checkpoint.last_event_id) " +
-            "< (EXCLUDED.last_event_created_at, EXCLUDED.last_event_id)");
-        checkpoint.Parameters.AddWithValue("eventCreated", pendingEvent.CreatedAt.ToUniversalTime());
-        checkpoint.Parameters.AddWithValue("eventId", pendingEvent.Id);
-        checkpoint.Parameters.AddWithValue("appliedAt", appliedAt);
-        commands.Add(checkpoint);
-        return commands;
+        var command = new NpgsqlBatchCommand(commandText);
+        command.Parameters.AddWithValue("events", eventsJson);
+        if (appliedAt is not null)
+            command.Parameters.AddWithValue("appliedAt", appliedAt.Value);
+        return command;
     }
 
     private sealed record PendingEvent(Guid Id, string Type, string Payload, DateTimeOffset CreatedAt);
