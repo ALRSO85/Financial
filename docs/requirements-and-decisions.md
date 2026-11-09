@@ -58,6 +58,26 @@ Os valores são um cenário de dimensionamento e teste para a revisão técnica.
 - **JSON:** deixa de ser a persistência operacional da solução revisada. Pode continuar como formato de exportação/fixture de teste, mas não como ledger concorrente.
 - **Sem garantia inventada:** valores de SLA/SLO, volume, latência, RTO e RPO são hipóteses de trabalho até validação da empresa.
 
+### Justificativa e trade-offs
+
+- **PostgreSQL em vez de arquivo JSON:** transações, constraints de unicidade e locks por conta protegem o ledger entre processos e instâncias. O arquivo exigia carregar e regravar todo o estado e não coordenava múltiplas instâncias. O custo é operar e recuperar o banco; backup e restore precisam ser ensaiados.
+- **Projeção de leitura separada:** a consulta não depende do processo nem da conexão do serviço de escrita e pode continuar servindo a última posição. O preço é consistência eventual, armazenamento adicional e necessidade de monitorar e reconstruir a projeção.
+- **Outbox transacional em vez de publicar diretamente ou introduzir um broker:** o evento é confirmado no mesmo commit do lançamento, evitando a janela em que o ledger grava e a publicação falha. Um worker independente lê essa outbox e aplica eventos idempotentemente. Para o escopo do desafio, isso evita operar um broker sem remover a necessidade de tratamento de retry e backlog; vários consumidores independentes ou requisitos maiores de vazão podem justificar uma plataforma de eventos depois.
+- **Mesma API com papéis e processos separados:** os modos `write` e `read` reutilizam contratos e autenticação, enquanto processos, conexões e bancos separados permitem falhas de processo isoladas. Isso não protege contra a perda do host nem substitui deploy multi-zona.
+- **Metas propostas, não declaradas como SLA empresarial:** sem perfil de carga, orçamento e domínio de falha fornecidos, os números servem como alvos de ensaio. Só devem virar compromisso após validação do negócio e medição na infraestrutura escolhida.
+
+## Rastreabilidade da devolutiva
+
+| Ponto levantado | Decisão e evidência no projeto | Situação e limite explícito |
+| --- | --- | --- |
+| Requisitos e documentação | Requisitos funcionais, premissas, consistência e alvos numéricos estão neste documento; desenho em [`architecture.md`](architecture.md), operação em [`runbook.md`](runbook.md) e HA em [`ADR-0001`](decisions/adr-0001-postgresql-high-availability.md). | Documentado para avaliação. Valores de SLA/SLO, RTO/RPO e carga continuam premissas sem aprovação da empresa. |
+| Disponibilidade da consolidação | API e banco de leitura independentes; o teste `Read_api_stays_available_during_write_process_outage_and_catches_up_after_recovery` encerra um processo real de escrita, lê 1.250 centavos durante a parada e observa 1.750 após processar o evento pendente. Evidência de execução no [`runbook.md`](runbook.md). | A falha de processo está comprovada. Queda do PostgreSQL, host, zona ou failover multi-host não estão comprovados; os dois bancos do sandbox compartilham o mesmo servidor. |
+| Cobertura de testes | Testes de regras, autorização, idempotência, concorrência entre instâncias/processos, replay e projeção; ensaios de carga e backup/restore registrados no [`runbook.md`](runbook.md). O CI executa restore, build e testes. | A suíte completa executada com PostgreSQL passou com 30 testes no ensaio registrado. Falhas físicas de banco, failover, split brain e carga durante failover continuam fora da evidência atual. |
+| Observabilidade e operação | Health/readiness, atualidade da projeção, métricas de transação e outbox, logs correlacionáveis, OpenTelemetry, alertas e runbooks. Consulte [`architecture.md`](architecture.md) e [`runbook.md`](runbook.md). | Instrumentação e alertas locais estão configurados; receiver externo, retenção de telemetria e gestão operacional de produção dependem da plataforma. |
+| Segurança | Escopos JWT, isolamento por titular, rate limits, limite de payload e auditoria; papéis de migration/runtime separados por scripts e teste de privilégios. | A migração dos papéis do sandbox ativo ainda requer backup, janela de manutenção e execução conforme o [`runbook.md`](runbook.md). Secret manager, rotação real e criptografia em repouso dependem da plataforma. |
+| Decisões de domínio e consistência | Moeda BRL, saldo contábil, compensação por novo lançamento, sem retroatividade e leitura eventualmente consistente estão declarados aqui; arquitetura de outbox e HA está justificada. | São premissas do exercício, não regras de produto confirmadas. A empresa deve validar moeda, estornos, reservas, atraso tolerado e comportamento de indisponibilidade. |
+| Persistência e recuperação | PostgreSQL protege gravações com transação, constraints e lock; o ledger é fonte autoritativa, e a projeção pode ser refeita da outbox. Backup criptografado e restauração local foram ensaiados. | Backup externo/PITR, política de retenção aprovada e failover não estão implementados no host de ensaio. Consulte os limites do [`runbook.md`](runbook.md). |
+
 ## Segurança e operação assumidas
 
 - JWT será validado por emissor confiável; autorização seguirá o titular da conta e políticas/perfis necessários. A chave de desenvolvimento não é reutilizável fora do ambiente local.
