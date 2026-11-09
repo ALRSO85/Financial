@@ -74,6 +74,7 @@ O banco de leitura ainda depende de estar disponível para responder consultas; 
 
 - `/health/live` verifica que o processo responde; `/health/ready` verifica banco e, para leitura, heartbeat/backlog do projetor. Projeção degradada informa status sem remover a API de leitura do balanceador, pois a última posição continua disponível.
 - Logs são JSON estruturados com correlação. OpenTelemetry coleta instrumentação ASP.NET/HTTP, traces do caso de uso e métricas de transações e projeção. Configure `OTEL_EXPORTER_OTLP_ENDPOINT` e um backend para armazenar, consultar e alertar sobre os sinais.
+- O Compose oferece o perfil opcional `observability` com Aspire Dashboard standalone para inspecionar traces, métricas e logs em desenvolvimento. A ingestão OTLP e a API de leitura do dashboard exigem chaves separadas; as portas ficam em loopback por padrão. O dashboard não substitui retenção, alertas ou um backend de produção.
 - Métricas próprias incluem lançamentos aceitos, repetições idempotentes, eventos projetados, duração de lote, eventos pendentes, dead letters e idade do backlog.
 - Procedimentos de deploy, backup/restore, rollback e troubleshooting estão em [`runbook.md`](runbook.md). O ambiente local não é backup nem recuperação de desastre.
 

@@ -7,3 +7,4 @@
 **/[dD]ata/financial.json.tmp
 .vs/
 .idea/
+.env

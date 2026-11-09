@@ -10,6 +10,20 @@ Este runbook cobre o ambiente demonstrativo e registra os procedimentos que prec
 4. Consulte `/health/live` e `/health/ready` em `http://localhost:5080` e `http://localhost:5081`.
 5. Gere um JWT local pelo script `New-LocalJwt.ps1`; o token de exemplo não é segredo e não pode ser reutilizado fora do ambiente local.
 
+### Diagnóstico OpenTelemetry local
+
+O serviço `financial-observability` fica no perfil Compose `observability` e usa o Aspire Dashboard standalone. Por padrão, a interface e as portas OTLP ficam vinculadas a `127.0.0.1`. A UI exige token de navegador, a ingestão OTLP usa uma chave e a API de consulta usa outra. O dashboard é para diagnóstico de desenvolvimento e retém telemetria apenas de forma limitada; não é o armazenamento de produção nem gera alertas.
+
+1. Copie `.env.example` para `.env` e gere duas chaves aleatórias distintas com pelo menos 32 bytes; não versione `.env`.
+2. Se as APIs estiverem em outra máquina da rede privada, defina `OBSERVABILITY_BIND_ADDRESS` no `.env` com o endereço privado do host do dashboard. Mantenha o serviço acessível somente a emissores confiáveis.
+3. Inicie o serviço com `docker compose --profile observability up -d financial-observability`.
+4. Configure nas APIs e no worker `OTEL_EXPORTER_OTLP_ENDPOINT=http://<host-observability>:4317`, `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` e `OTEL_EXPORTER_OTLP_HEADERS=x-otlp-api-key=<chave-de-ingestao>`.
+5. Abra `http://<host-observability>:18888` e use o link de login emitido nos logs do container. Para confirmar ingestão pela API de telemetria, envie `x-api-key: <chave-da-api>` a `GET /api/telemetry/resources` ou `GET /api/telemetry/traces`.
+
+As portas usam HTTP/gRPC sem TLS no Compose demonstrativo; restrinja-as à máquina local ou a uma rede privada controlada. Para produção, use um coletor/backend operado, TLS, gestão e rotação de chaves, retenção aprovada e alertas. Consulte a [documentação do Aspire Dashboard standalone](https://aspire.dev/dashboard/standalone/) e as [considerações de segurança](https://aspire.dev/dashboard/security-considerations/).
+
+Em 09/11/2026, o perfil foi iniciado no host Docker de ensaio, vinculado somente ao endereço privado desse host. A UI respondeu HTTP 200 e as portas OTLP gRPC/HTTP ficaram acessíveis. Com chaves diferentes para ingestão e consulta, uma API de escrita apontada para a base PostgreSQL sintética enviou traces, métricas e logs. A API de telemetria confirmou o recurso `Financial.write`, `hasTraces=true`, `hasMetrics=true`, `hasLogs=true`, 12 spans e um registro de log. Entre os spans recebidos estavam `financial.database.account_lock`, `financial.database.write_batch` e `financial.database.commit`. A requisição de smoke test criou apenas um crédito de um centavo na base dedicada; outra chamada intencional a uma conta inexistente gerou o log `404` sem registrar ID. O dashboard permanece sem volume de persistência, portanto seus dados somem quando o container é recriado; a configuração e as chaves ficam no diretório privado do host, fora do repositório.
+
 O `docker-compose.yml` guarda dados em volumes locais sem replicação. Para reiniciar um ambiente de teste limpo, pare os containers e remova apenas os volumes deste compose depois de confirmar que não há dados necessários. Não use os comandos de limpeza local em ambiente compartilhado.
 
 ## Deploy e rollback

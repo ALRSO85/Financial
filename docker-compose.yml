@@ -31,6 +31,28 @@ services:
       timeout: 3s
       retries: 20
 
+  financial-observability:
+    profiles: ["observability"]
+    image: mcr.microsoft.com/aspire/dashboard:13.6.4
+    environment:
+      ASPNETCORE_URLS: http://0.0.0.0:18888
+      ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL: http://0.0.0.0:18889
+      ASPIRE_DASHBOARD_OTLP_HTTP_ENDPOINT_URL: http://0.0.0.0:18890
+      Dashboard__ApplicationName: Financial.LocalDiagnostics
+      Dashboard__Otlp__AuthMode: ApiKey
+      Dashboard__Otlp__PrimaryApiKey: ${ASPIRE_DASHBOARD_OTLP_API_KEY:?Set ASPIRE_DASHBOARD_OTLP_API_KEY in .env}
+      Dashboard__Api__Enabled: "true"
+      Dashboard__Api__AuthMode: ApiKey
+      Dashboard__Api__PrimaryApiKey: ${ASPIRE_DASHBOARD_API_KEY:?Set ASPIRE_DASHBOARD_API_KEY in .env}
+      Dashboard__TelemetryLimits__MaxLogCount: "10000"
+      Dashboard__TelemetryLimits__MaxTraceCount: "10000"
+      Dashboard__TelemetryLimits__MaxMetricsCount: "10000"
+    ports:
+      - "${OBSERVABILITY_BIND_ADDRESS:-127.0.0.1}:18888:18888"
+      - "${OBSERVABILITY_BIND_ADDRESS:-127.0.0.1}:4317:18889"
+      - "${OBSERVABILITY_BIND_ADDRESS:-127.0.0.1}:4318:18890"
+    restart: unless-stopped
+
 volumes:
   financial-write-data:
   financial-read-data:

@@ -33,6 +33,8 @@ A solução executa uma API de escrita, uma API de leitura e um projetor de even
 docker compose up -d financial-write-db financial-read-db
 ```
 
+Para diagnóstico local com traces, métricas e logs OpenTelemetry, consulte a opção `observability` em [`docs/runbook.md`](docs/runbook.md). O perfil não inicia junto com os bancos por padrão.
+
 O schema inicial é aplicado no início da API; as migrations ficam em `src/Financial.Infrastructure/Migrations`. O adapter JSON permanece disponível somente para testes e isolamento local. No PowerShell, inicie a API pelo script, que configura valores JWT temporários e a conexão local apenas para desenvolvimento:
 
 No primeiro terminal:
