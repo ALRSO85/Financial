@@ -116,7 +116,7 @@ $env:FinancialTests__PostgresConnectionString = "Host=localhost;Port=5432;Databa
 dotnet test
 ```
 
-No Linux/macOS, exporte a mesma variável antes de executar `dotnet test`. O CI inicia um PostgreSQL efêmero e executa também esses testes.
+No Linux/macOS, exporte a mesma variável antes de executar `dotnet test`. Localmente, a suíte usa o banco de escrita também para o schema de leitura quando `FinancialTests__ReadPostgresConnectionString` não está definido. Para exercitar bancos independentes, configure essa variável com a conexão administrativa do PostgreSQL de leitura. O CI provisiona dois serviços PostgreSQL efêmeros separados e executa a suíte contra ambos.
 
 Os testes JSON cobrem regras de domínio, autenticação e contratos HTTP; os testes PostgreSQL exercitam concorrência entre conexões, idempotência, atomicidade da outbox e reprocessamento da projeção. Um teste HTTP publica uma movimentação, encerra o host da API de escrita e confirma que a API de leitura continua consultando o saldo consolidado projetado, mesmo com a conexão de escrita indisponível. Os testes de integração criam schemas isolados e removem esses schemas ao final.
 

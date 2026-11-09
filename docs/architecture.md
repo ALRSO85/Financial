@@ -38,7 +38,7 @@ A API de leitura consulta apenas o banco projetado, que mantém contas, saldos a
 
 A consistência entre escrita e leitura é eventual. `dataAsOf` informa o instante mais recente aplicado à conta/projeção. O cliente deve tratar esse campo como atualidade da resposta e pode repetir a consulta após uma gravação. Com o projetor parado, a API de leitura continua atendendo a última projeção. O estado de health informa heartbeat, backlog e idade do evento pendente.
 
-O alvo proposto é aplicar eventos em até 30 segundos em condições normais e sinalizar degradação quando o evento pendente mais antigo passar de 5 minutos. O limite de 30 segundos está alinhado ao desafio revisado. Esses valores são premissas de avaliação; não foram medidos em carga e precisam de validação pelo negócio.
+O alvo proposto é aplicar eventos em até 30 segundos em condições normais e sinalizar degradação quando o evento pendente mais antigo passar de 5 minutos. Em ensaio local sustentado por cinco minutos, a fila chegou a zero até cinco segundos após o fim da carga, mas o atraso máximo por evento não foi instrumentado. Portanto, o resultado não comprova o limite de 30 segundos. Esses valores são premissas de avaliação e precisam de validação pelo negócio.
 
 ## Persistência e migrations
 
@@ -78,4 +78,4 @@ O banco de leitura ainda depende de estar disponível para responder consultas; 
 
 ## Limites restantes
 
-Não há teste de carga executado, replicação/failover de PostgreSQL, proxy/balanceador, rotação real de secrets, política legal de retenção ou reconciliação automatizada de negócio. A outbox mantém eventos processados e pode crescer indefinidamente até uma política de arquivamento ser aprovada. O teste PostgreSQL mede regras transacionais e reprocessamento; não substitui teste multi-host ou ensaio operacional. As premissas numéricas devem ser ajustadas antes de tratar esta arquitetura como compromisso para produção.
+Foram executados ensaios locais de leitura e escrita, incluindo 150.000 escritas em cinco minutos. Nesse cenário, a projeção drenou o backlog após a carga, mas p95 de escrita foi 484,52 ms e p99 1.403,28 ms, acima das referências provisórias de 300 ms e 1 s. Esses resultados e seus limites estão em [`runbook.md`](runbook.md); não representam SLO aprovado nem capacidade em outra infraestrutura. Ainda faltam replicação/failover de PostgreSQL, proxy/balanceador, rotação real de secrets, política legal de retenção, reconciliação automatizada de negócio e teste multi-host. A outbox mantém eventos processados e pode crescer indefinidamente até uma política de arquivamento ser aprovada. As premissas numéricas devem ser ajustadas antes de tratar esta arquitetura como compromisso para produção.
