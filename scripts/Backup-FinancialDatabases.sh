@@ -102,7 +102,7 @@ for container in "$WRITE_CONTAINER" "$READ_CONTAINER"; do
       echo "Dump vazio: $container/$database" >&2
       exit 1
     fi
-    docker exec -i "$container" pg_restore --list - < "$dump_file" >/dev/null
+    docker exec -i "$container" pg_restore --list < "$dump_file" >/dev/null
     chmod 600 "$dump_file"
     printf '%s/%s bytes=%s sha256=' "$container" "$database" "$(stat -c '%s' "$dump_file")" >> "$manifest"
     sha256sum "$dump_file" | cut -d ' ' -f 1 >> "$manifest"

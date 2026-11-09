@@ -96,6 +96,8 @@ Execute `bash scripts/Backup-FinancialDatabases.sh` uma vez para validar agora, 
 
 Esta rotina é um backup lógico completo local, não PITR: pode perder até um dia de alterações e depende do mesmo host e do mesmo domínio de falha. Os dumps ainda não são cifrados e não são enviados para fora do host; por isso, a rotina não atende os objetivos provisórios de RPO 0, criptografia em repouso ou recuperação após perda do servidor. Mantenha o serviço somente no ambiente de ensaio até definir e validar uma chave de cifragem e um destino externo.
 
+Em 09/11/2026, a primeira execução manual do job criou e validou nove dumps dos bancos `financial*`, totalizando aproximadamente 298 MB. Os arquivos e o manifesto ficaram com modo `600`, dentro de uma pasta `700`; cada dump passou pela leitura de catálogo do `pg_restore` e recebeu SHA-256. O cron foi instalado para 03:00 no fuso local do servidor. Após recriar o Prometheus para aplicar a nova configuração, o alvo `financial-backup` e as métricas de sucesso (`1`) e quantidade de bancos (`9`) foram coletados; as sondagens de APIs e bancos também ficaram `up`, sem alertas ativos. Esta verificação comprova execução e monitoramento da rotina, mas não comprova que a janela diária já ocorreu nem remove as limitações de cifragem e armazenamento no mesmo host.
+
 Para uma cópia manual do banco local, o cliente `pg_dump` pode gravar o dump dentro do container e depois copiá-lo para fora:
 
 ```powershell
