@@ -120,6 +120,8 @@ No Linux/macOS, exporte a mesma variável antes de executar `dotnet test`. Local
 
 Os testes JSON cobrem regras de domínio, autenticação e contratos HTTP; os testes PostgreSQL exercitam concorrência entre conexões, idempotência, atomicidade da outbox e reprocessamento da projeção. Um teste HTTP publica uma movimentação, encerra o host da API de escrita e confirma que a API de leitura continua consultando o saldo consolidado projetado, mesmo com a conexão de escrita indisponível. Os testes de integração criam schemas isolados e removem esses schemas ao final.
 
+O gerador de carga em `tools/Financial.LoadTest` executa escritas sintéticas distribuídas por uma lista de contas, com concorrência, duração e taxa programada configuráveis. Ele exige a flag `--allow-write-load` e grava créditos de um centavo que permanecem no banco informado; use somente uma API e contas de ensaio. Os resultados sustentados documentados, incluindo latência e reconciliação da projeção, estão em [`docs/runbook.md`](docs/runbook.md).
+
 Para ensaios de leitura, `scripts/Seed-FinancialReadLoadTest.ps1` prepara fixtures sintéticos persistentes em um banco PostgreSQL dedicado, separado da base usada pela API ativa. A base contém 1.000 contas em quatro titulares e não representa o ledger de escrita; consulte o procedimento e as limitações em [`docs/runbook.md`](docs/runbook.md).
 
 ## Organização do código
@@ -134,6 +136,8 @@ src/
   Financial.Projector.Worker/ consumidor da outbox e projeção de leitura
 tests/
   Financial.Api.Tests/      testes automatizados dos casos de uso
+tools/
+  Financial.LoadTest/       gerador controlado de carga sintética da API
 ```
 
 O domínio não depende de HTTP ou armazenamento. A aplicação depende do domínio e define portas de escrita e leitura; a infraestrutura as implementa, e a API conecta as dependências. As premissas da revisão ficam em [`docs/requirements-and-decisions.md`](docs/requirements-and-decisions.md), as decisões em [`docs/architecture.md`](docs/architecture.md) e os procedimentos em [`docs/runbook.md`](docs/runbook.md).

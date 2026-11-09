@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Financial.Application;
 using Financial.Domain;
@@ -50,7 +52,8 @@ public sealed class PostgresFinancialRepository(NpgsqlDataSource dataSource) : I
         {
             var result = await operation(session, cancellationToken);
             await session.FlushAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            await MeasureAsync("financial.database.commit", FinancialDatabaseTelemetry.CommitDuration,
+                () => transaction.CommitAsync(cancellationToken));
             return result;
         }
         catch
@@ -76,7 +79,6 @@ public sealed class PostgresFinancialRepository(NpgsqlDataSource dataSource) : I
     private sealed class PostgresWriteSession(NpgsqlConnection connection, NpgsqlTransaction transaction) : IFinancialWriteSession
     {
         private readonly Dictionary<Guid, Account> _lockedAccounts = [];
-        private readonly Dictionary<Guid, DateTimeOffset> _lastOccurredAtByAccount = [];
         private readonly List<NpgsqlBatchCommand> _pendingCommands = [];
 
         public Task AddAccountAsync(Account account, CancellationToken cancellationToken)
@@ -101,38 +103,62 @@ public sealed class PostgresFinancialRepository(NpgsqlDataSource dataSource) : I
         public async Task<LockedAccountContext?> LockAccountAsync(Guid accountId, string ownerReference,
             string idempotencyKey, CancellationToken cancellationToken)
         {
-            await using var batch = new NpgsqlBatch(connection, transaction);
-            var lockAccount = new NpgsqlBatchCommand(
-                "SELECT id, owner_reference, created_at, balance_cents, last_occurred_at FROM financial_accounts " +
-                "WHERE id = @id AND owner_reference = @owner FOR UPDATE");
-            lockAccount.Parameters.AddWithValue("id", accountId);
-            lockAccount.Parameters.AddWithValue("owner", ownerReference);
-            batch.BatchCommands.Add(lockAccount);
-
-            var findIdempotent = new NpgsqlBatchCommand(
-                "SELECT id, account_id, entry_type, amount_cents, signed_amount_cents, idempotency_key, description, occurred_at " +
-                "FROM financial_entries WHERE account_id = @account AND idempotency_key = @key");
-            findIdempotent.Parameters.AddWithValue("account", accountId);
-            findIdempotent.Parameters.AddWithValue("key", idempotencyKey);
-            batch.BatchCommands.Add(findIdempotent);
-
-            await using var reader = await batch.ExecuteReaderAsync(cancellationToken);
-            Account? account = null;
-            DateTimeOffset? lastRecordedAt = null;
-            if (await reader.ReadAsync(cancellationToken))
+            using var activity = FinancialDatabaseTelemetry.ActivitySource.StartActivity("financial.database.account_lock");
+            activity?.SetTag("db.system", "postgresql");
+            activity?.SetTag("db.operation", "SELECT FOR UPDATE");
+            var stopwatch = Stopwatch.StartNew();
+            var outcome = "success";
+            try
             {
-                account = new Account(reader.GetGuid(0), reader.GetString(1), reader.GetFieldValue<DateTimeOffset>(2),
-                    new Money(reader.GetInt64(3)));
-                lastRecordedAt = reader.GetFieldValue<DateTimeOffset>(4);
+                await using var batch = new NpgsqlBatch(connection, transaction);
+                var lockAccount = new NpgsqlBatchCommand(
+                    "SELECT id, owner_reference, created_at, balance_cents, last_occurred_at FROM financial_accounts " +
+                    "WHERE id = @id AND owner_reference = @owner FOR UPDATE");
+                lockAccount.Parameters.AddWithValue("id", accountId);
+                lockAccount.Parameters.AddWithValue("owner", ownerReference);
+                batch.BatchCommands.Add(lockAccount);
+
+                var findIdempotent = new NpgsqlBatchCommand(
+                    "SELECT id, account_id, entry_type, amount_cents, signed_amount_cents, idempotency_key, description, occurred_at " +
+                    "FROM financial_entries WHERE account_id = @account AND idempotency_key = @key");
+                findIdempotent.Parameters.AddWithValue("account", accountId);
+                findIdempotent.Parameters.AddWithValue("key", idempotencyKey);
+                batch.BatchCommands.Add(findIdempotent);
+
+                await using var reader = await batch.ExecuteReaderAsync(cancellationToken);
+                Account? account = null;
+                DateTimeOffset? lastRecordedAt = null;
+                if (await reader.ReadAsync(cancellationToken))
+                {
+                    account = new Account(reader.GetGuid(0), reader.GetString(1), reader.GetFieldValue<DateTimeOffset>(2),
+                        new Money(reader.GetInt64(3)));
+                    lastRecordedAt = reader.GetFieldValue<DateTimeOffset>(4);
+                }
+
+                await reader.NextResultAsync(cancellationToken);
+                var existingEntry = await reader.ReadAsync(cancellationToken) ? ReadEntry(reader) : null;
+                if (account is null)
+                {
+                    outcome = "not_found";
+                    activity?.SetTag("financial.outcome", outcome);
+                    return null;
+                }
+
+                _lockedAccounts[account.Id] = account;
+                activity?.SetTag("financial.outcome", outcome);
+                return new LockedAccountContext(account, existingEntry, lastRecordedAt!.Value);
             }
-
-            await reader.NextResultAsync(cancellationToken);
-            var existingEntry = await reader.ReadAsync(cancellationToken) ? ReadEntry(reader) : null;
-            if (account is null) return null;
-
-            _lockedAccounts[account.Id] = account;
-            _lastOccurredAtByAccount[account.Id] = lastRecordedAt!.Value;
-            return new LockedAccountContext(account, existingEntry, lastRecordedAt.Value);
+            catch (Exception exception)
+            {
+                outcome = "error";
+                activity?.SetStatus(ActivityStatusCode.Error, exception.GetType().Name);
+                throw;
+            }
+            finally
+            {
+                FinancialDatabaseTelemetry.AccountLockDuration.Record(stopwatch.Elapsed.TotalMilliseconds,
+                    new KeyValuePair<string, object?>("outcome", outcome));
+            }
         }
 
         public Task UpdateAccountAsync(Account account, DateTimeOffset lastRecordedAt, CancellationToken cancellationToken)
@@ -147,7 +173,6 @@ public sealed class PostgresFinancialRepository(NpgsqlDataSource dataSource) : I
             command.Parameters.AddWithValue("lastOccurredAt", lastRecordedAt.ToUniversalTime());
             _pendingCommands.Add(command);
             _lockedAccounts[account.Id] = account;
-            _lastOccurredAtByAccount[account.Id] = lastRecordedAt;
             return Task.CompletedTask;
         }
 
@@ -197,10 +222,31 @@ public sealed class PostgresFinancialRepository(NpgsqlDataSource dataSource) : I
         public async Task FlushAsync(CancellationToken cancellationToken)
         {
             if (_pendingCommands.Count == 0) return;
+            using var activity = FinancialDatabaseTelemetry.ActivitySource.StartActivity("financial.database.write_batch");
+            activity?.SetTag("db.system", "postgresql");
+            activity?.SetTag("db.operation", "BATCH");
+            activity?.SetTag("db.batch.command_count", _pendingCommands.Count);
+            var stopwatch = Stopwatch.StartNew();
+            var outcome = "success";
             await using var batch = new NpgsqlBatch(connection, transaction);
             foreach (var command in _pendingCommands)
                 batch.BatchCommands.Add(command);
-            await batch.ExecuteNonQueryAsync(cancellationToken);
+            try
+            {
+                await batch.ExecuteNonQueryAsync(cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                outcome = "error";
+                activity?.SetStatus(ActivityStatusCode.Error, exception.GetType().Name);
+                throw;
+            }
+            finally
+            {
+                FinancialDatabaseTelemetry.WriteBatchDuration.Record(stopwatch.Elapsed.TotalMilliseconds,
+                    new KeyValuePair<string, object?>("outcome", outcome));
+                FinancialDatabaseTelemetry.WriteBatchCommandCount.Record(_pendingCommands.Count);
+            }
         }
 
         private void AddAuditEvent(string actorReference, string action, Guid accountId, Guid? transactionId)
@@ -227,6 +273,29 @@ public sealed class PostgresFinancialRepository(NpgsqlDataSource dataSource) : I
             command.Parameters.AddWithValue("payload", NpgsqlDbType.Text, payload);
             command.Parameters.AddWithValue("created", createdAt.ToUniversalTime());
             _pendingCommands.Add(command);
+        }
+    }
+
+    private static async Task MeasureAsync(string operationName, Histogram<double> duration, Func<Task> operation)
+    {
+        using var activity = FinancialDatabaseTelemetry.ActivitySource.StartActivity(operationName);
+        activity?.SetTag("db.system", "postgresql");
+        activity?.SetTag("db.operation", "COMMIT");
+        var stopwatch = Stopwatch.StartNew();
+        var outcome = "success";
+        try
+        {
+            await operation();
+        }
+        catch (Exception exception)
+        {
+            outcome = "error";
+            activity?.SetStatus(ActivityStatusCode.Error, exception.GetType().Name);
+            throw;
+        }
+        finally
+        {
+            duration.Record(stopwatch.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("outcome", outcome));
         }
     }
 

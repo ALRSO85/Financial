@@ -44,6 +44,7 @@ builder.Services.AddFinancialPersistence(builder.Configuration, builder.Environm
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
 builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.Limits.MaxRequestBodySize = 64 * 1024;
@@ -174,9 +175,10 @@ var telemetry = builder.Services.AddOpenTelemetry()
                 activity.SetTag("url.full", $"{request.Scheme}://{request.Host}{route}");
             }
         }).AddHttpClientInstrumentation()
+        .AddSource(FinancialDatabaseTelemetry.InstrumentationName)
         .AddSource(FinancialTelemetry.InstrumentationName))
     .WithMetrics(metrics => metrics.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation()
-        .AddMeter(FinancialTelemetry.InstrumentationName, "Financial.Infrastructure"));
+        .AddMeter(FinancialTelemetry.InstrumentationName, FinancialDatabaseTelemetry.InstrumentationName));
 if (!string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]))
     telemetry.WithTracing(tracing => tracing.AddOtlpExporter())
         .WithMetrics(metrics => metrics.AddOtlpExporter())
@@ -254,7 +256,7 @@ app.Use(async (context, next) =>
     using (app.Logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
     {
         await next();
-        app.Logger.LogInformation("HTTP request completed {HttpMethod} {Route} {StatusCode}",
+        app.Logger.LogDebug("HTTP request completed {HttpMethod} {Route} {StatusCode}",
             context.Request.Method, route, context.Response.StatusCode);
     }
 });

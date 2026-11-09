@@ -1,6 +1,7 @@
 param(
     [string]$Subject = "customer-123",
-    [string[]]$Scopes = @("financial.read", "financial.write")
+    [string[]]$Scopes = @("financial.read", "financial.write"),
+    [ValidateRange(1, 15)][int]$LifetimeMinutes = 5
 )
 
 $env:Jwt__Issuer = "financial-local"
@@ -31,7 +32,7 @@ $payloadObject = @{
     scope = ($Scopes -join ' ')
     iat = $now
     nbf = $now
-    exp = $now + 300
+    exp = $now + ($LifetimeMinutes * 60)
 }
 $payloadJson = ConvertTo-Json -InputObject $payloadObject -Compress
 $payload = ConvertTo-Base64Url ([Text.Encoding]::UTF8.GetBytes($payloadJson))

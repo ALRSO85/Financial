@@ -127,6 +127,23 @@ Em 08/11/2026, o projetor foi alterado para processar cada lote de até 500 even
 
 Na repetição de cinco minutos após a otimização, foram concluídas 150.000 escritas em 301,67 s (497,23/s), todas `201`. Latências: p50 31,68 ms, p95 484,52 ms, p99 1.403,28 ms e máximo 3.859,14 ms. Ao fim, havia 487 eventos pendentes; a fila chegou a zero na verificação de cinco segundos seguinte. A reconciliação encontrou 50 contas, 150.050 lançamentos e saldo de 350.000 centavos nas bases de escrita e leitura; a consulta HTTP retornou os mesmos 350.000 centavos. O pipeline acompanhou o volume total, mas a latência subiu em relação ao ensaio de um minuto. P95 de 300 ms e p99 de 1 s continuam referências provisórias e não foram atingidos nesta execução sustentada; investigar saturação e repetir com tracing antes de concluir o dimensionamento.
 
+A API também publica spans `financial.database.account_lock`, `financial.database.write_batch` e `financial.database.commit`, com histogramas `financial.database.account_lock.duration`, `financial.database.write_batch.duration`, `financial.database.commit.duration` e `financial.database.write_batch.commands`. Configure `OTEL_EXPORTER_OTLP_ENDPOINT` para enviar traces e métricas a um backend e comparar a duração e os erros dessas etapas com a latência HTTP. Os atributos não incluem dados ou identificadores financeiros.
+
+Em 09/11/2026, uma nova execução de cinco minutos foi feita com o gerador `tools/Financial.LoadTest`, 50 contas sintéticas, concorrência 150 e taxa programada de 500 solicitações/s. A API e o projetor rodaram no cliente de ensaio; os PostgreSQL de escrita e leitura eram containers separados em outro host da rede local. Foram aceitos 149.999 créditos de um centavo em 300,29 s (499,52/s), todos `201`, sem falhas de transporte. Latências da API: p50 12,99 ms, p95 155,25 ms, p99 600,02 ms e máximo 1.524,45 ms. Assim, esta execução atingiu as metas provisórias de p95 300 ms e p99 1 s; o máximo evidencia picos e uma única execução não valida um SLO de produção.
+
+Como diagnóstico distinto, uma execução preliminar de 60 s enviou 7.941 operações para uma única conta: 129,91/s, p50 918,99 ms, p95 2.371,73 ms e p99 3.405,15 ms, todas `201`. Esse cenário concentra todas as transações no mesmo lock por conta e mostra contenção; não é comparável ao perfil de 50 contas nem representa a mesma taxa-alvo.
+
+O projetor manteve o backlog próximo de zero e terminou com zero eventos pendentes. A reconciliação dos dados sintéticos encontrou 51 contas, 386.540 lançamentos e saldo agregado de 386.540 centavos em cada banco; a conta adicional e parte dos lançamentos vieram do ensaio preliminar de contenção em uma única conta. A carga de cinco minutos foi distribuída apenas pelas outras 50 contas. Amostras de `docker stats` durante o ensaio mostraram cerca de 328–356 MiB no container de escrita e 175–179 MiB no de leitura. `dotnet-counters` coletou 301 janelas de um segundo; a mediana do p95 por janela foi 7,29 ms no lock da conta, 7,77 ms no lote SQL e 9,89 ms no commit. Os maiores p95 de uma janela isolada foram 948 ms, 64,12 ms e 1.032 ms, respectivamente, então os sinais apontam para picos esporádicos de lock/commit que merecem correlação em tracing OTLP. Nesta execução, as métricas foram coletadas por `dotnet-counters`; os spans ainda não foram enviados a um backend OTLP.
+
+O gerador distribui as escritas em round-robin por IDs explícitos, aceita taxa-alvo e duração, e exige `--allow-write-load`. Cada solicitação cria um crédito sintético de um centavo que permanece no banco; execute apenas contra API e contas de teste. Exemplo para uma base isolada já provisionada:
+
+```powershell
+$env:FINANCIAL_LOADTEST_TOKEN = .\scripts\New-LocalJwt.ps1 -Subject "loadtest" -LifetimeMinutes 10
+dotnet run --project tools/Financial.LoadTest/Financial.LoadTest.csproj -- --allow-write-load --base-url http://localhost:5082 --account-ids "<guid-1>,<guid-2>" --duration 00:05:00 --concurrency 150 --requests-per-second 500
+```
+
+O ensaio não incluiu consultas HTTP de leitura durante a carga nem falha deliberada de PostgreSQL, failover, backup/restore ou perda do host. Ele valida latência de escrita e drenagem da projeção neste ambiente específico; não comprova RTO/RPO nem disponibilidade de infraestrutura.
+
 ### Base persistente de dados sintéticos para consulta
 
 Foi criado o banco dedicado `financial_read_loadtest` no container `financial-read-db`, separado do banco `financial_read` usado pela API ativa. Ele contém 1.000 contas sintéticas de leitura, distribuídas igualmente por `loadtest-customer-001` a `loadtest-customer-004` (250 contas por titular). A base foi verificada após duas execuções do seed: continua com 1.000 contas, enquanto o banco ativo permanece sem essas contas.
