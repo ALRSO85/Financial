@@ -3,9 +3,9 @@ set -euo pipefail
 umask 077
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BACKUP_DIR="/home/alexandre/financial-backups"
-METRICS_DIR="$PROJECT_DIR/monitoring/metrics"
-METRICS_FILE="$METRICS_DIR/financial_backup.prom"
+BACKUP_DIR="${FINANCIAL_BACKUP_ROOT:-/home/alexandre/financial-backups}"
+METRICS_FILE="${FINANCIAL_BACKUP_METRICS_FILE:-$PROJECT_DIR/monitoring/metrics/financial_backup.prom}"
+METRICS_DIR="$(dirname "$METRICS_FILE")"
 RETENTION_DAYS=14
 WRITE_CONTAINER="financial-write-db"
 READ_CONTAINER="financial-read-db"
@@ -15,9 +15,8 @@ RCLONE_CONFIG_PATH="${RCLONE_CONFIG:-}"
 
 load_project_setting() {
   local setting_name="$1"
-  local current_value="${!setting_name:-}"
-  if [[ -n "$current_value" ]]; then
-    printf '%s' "$current_value"
+  if [[ -v "$setting_name" ]]; then
+    printf '%s' "${!setting_name}"
     return
   fi
   if [[ -f "$PROJECT_DIR/.env" ]]; then
