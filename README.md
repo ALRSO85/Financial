@@ -126,6 +126,8 @@ O gerador de carga em `tools/Financial.LoadTest` executa escritas sintéticas di
 
 Para ensaios de leitura, `scripts/Seed-FinancialReadLoadTest.ps1` prepara fixtures sintéticos persistentes em um banco PostgreSQL dedicado, separado da base usada pela API ativa. A base contém 1.000 contas em quatro titulares e não representa o ledger de escrita; consulte o procedimento e as limitações em [`docs/runbook.md`](docs/runbook.md).
 
+O script `scripts/Test-FinancialBackupRestore.ps1` valida backup e restore lógico no servidor Docker/PostgreSQL de ensaio (`192.168.88.200` por padrão), usando o banco sintético dedicado e restaurando em uma base nova. Consulte [`docs/runbook.md`](docs/runbook.md) antes de alterar os parâmetros; o ensaio não configura backup agendado nem recuperação de desastre.
+
 ## Organização do código
 
 ```text

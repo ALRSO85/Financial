@@ -65,6 +65,16 @@ Após restore, valide migrations, contagem de contas/lançamentos, constraints, 
 
 ### Ensaio manual de backup e restore
 
+Para repetir a validação no host Docker remoto, use `scripts/Test-FinancialBackupRestore.ps1`. O padrão aponta para `alexandre@192.168.88.200`, o container `financial-write-db` e o banco sintético dedicado `financial_write_instrumented`. O script cria um dump custom-format com permissão restrita, calcula SHA-256, valida a lista do arquivo, restaura em um banco novo com nome único e compara contagens e somas. Ele preserva o dump e o banco restaurado para inspeção; não remove nem substitui o banco de origem. Revise os parâmetros antes de apontar para outro ambiente.
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\Test-FinancialBackupRestore.ps1
+```
+
+Em 09/11/2026, a execução no servidor `192.168.88.200` criou um dump de 57.300.882 bytes e restaurou `financial_write_instrumented` em `financial_restore_validation_20261109_105419_f8175cdb4a`. O SHA-256 foi `a2e0bbe2c89b13e04900d762c36c6505f6f9598f55eedd29875185c5f8d429d5`. As contagens e somas coincidiram: 52 contas, 386.541 lançamentos, 386.593 eventos de outbox (2 pendentes) e 386.593 eventos de auditoria; referências órfãs: zero. O dump e a base restaurada foram mantidos no host para inspeção.
+
+Este ensaio comprova backup lógico e restauração no mesmo host e instância PostgreSQL com dados sintéticos. Não comprova agendamento, criptografia do arquivo, cópia fora do host, PITR, failover ou recuperação após perda do servidor; portanto, não estabelece RPO/RTO de produção.
+
 Em 08/11/2026, foi criado um dump custom-format do banco de escrita `financial` no container `financial-write-db` e restaurado em um banco descartável separado, no mesmo container. A validação encontrou as mesmas cinco tabelas públicas e duas migrations; as contagens de contas, lançamentos, outbox e auditoria foram iguais (`0` em ambas as bases). O banco descartável e o dump temporário foram removidos após a comparação. Os dois bancos permaneceram `healthy` e as APIs de escrita e leitura responderam `200` em readiness.
 
 Este ensaio confirma a execução básica de `pg_dump`/`pg_restore` para um banco vazio. Não valida restauração de lançamentos reais, reconciliação de saldos, recuperação da projeção, duração/RTO, PITR, criptografia ou cópia fora do host. Um ensaio com dados representativos e em infraestrutura isolada continua necessário antes de atribuir garantias operacionais ao backup.
