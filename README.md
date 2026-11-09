@@ -150,7 +150,7 @@ tools/
   Financial.LoadTest/       gerador controlado de carga sintética da API
 ```
 
-O domínio não depende de HTTP ou armazenamento. A aplicação depende do domínio e define portas de escrita e leitura; a infraestrutura as implementa, e a API conecta as dependências. As premissas da revisão ficam em [`docs/requirements-and-decisions.md`](docs/requirements-and-decisions.md), as decisões em [`docs/architecture.md`](docs/architecture.md) e os procedimentos em [`docs/runbook.md`](docs/runbook.md).
+O domínio não depende de HTTP ou armazenamento. A aplicação depende do domínio e define portas de escrita e leitura; a infraestrutura as implementa, e a API conecta as dependências. Para a visão organizada das decisões, alternativas, premissas, limites e validações propostas, comece pela [proposta arquitetural para avaliação](docs/proposta-arquitetural.md). O detalhamento fica em [`docs/requirements-and-decisions.md`](docs/requirements-and-decisions.md), [`docs/architecture.md`](docs/architecture.md) e [`docs/runbook.md`](docs/runbook.md).
 
 ## Fluxo principal
 
@@ -208,6 +208,7 @@ sequenceDiagram
 | JWT, escopos, endpoints, Swagger e health checks | `src/Financial.Api/` |
 | Regras, contrato HTTP, concorrência entre conexões/instâncias/processos e falha da escrita | `tests/Financial.Api.Tests/`, especialmente `PostgresFinancialRepositoryTests.cs` |
 | Premissas e metas operacionais | [`docs/requirements-and-decisions.md`](docs/requirements-and-decisions.md) |
+| Proposta arquitetural organizada para avaliação | [`docs/proposta-arquitetural.md`](docs/proposta-arquitetural.md) |
 | Rastreabilidade da devolutiva da avaliação | [`docs/requirements-and-decisions.md#rastreabilidade-da-devolutiva`](docs/requirements-and-decisions.md#rastreabilidade-da-devolutiva) |
 | Proposta de HA e critérios de failover | [`docs/decisions/adr-0001-postgresql-high-availability.md`](docs/decisions/adr-0001-postgresql-high-availability.md) |
 | Operação, recuperação, reconciliação e troubleshooting | [`docs/runbook.md`](docs/runbook.md), `scripts/Reconcile-FinancialProjection.sh` |
