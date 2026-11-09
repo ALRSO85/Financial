@@ -6,7 +6,7 @@ param(
 
 $env:Jwt__Issuer = "financial-local"
 $env:Jwt__Audience = "financial-api"
-$env:Jwt__SigningKey = "local-only-change-this-key-to-a-random-32-byte-value"
+$env:Jwt__SigningKey = & (Join-Path $PSScriptRoot "Get-FinancialLocalJwtKey.ps1")
 
 $issuer = $env:Jwt__Issuer
 $audience = $env:Jwt__Audience

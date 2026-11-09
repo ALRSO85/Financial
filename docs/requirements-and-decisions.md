@@ -80,7 +80,7 @@ Os valores são um cenário de dimensionamento e teste para a revisão técnica.
 
 ## Segurança e operação assumidas
 
-- JWT será validado por emissor confiável; autorização seguirá o titular da conta e políticas/perfis necessários. A chave de desenvolvimento não é reutilizável fora do ambiente local.
+- JWT será validado por emissor confiável; autorização seguirá o titular da conta e políticas/perfis necessários. Para desenvolvimento local, scripts geram uma chave aleatória de 256 bits guardada fora do repositório com permissões restritas do usuário; a API recusa a chave simétrica local fora de `Development`.
 - Segredos de ambiente real vêm de um secret manager, com rotação; dados financeiros e identificadores pessoais não aparecem em logs.
 - TLS protege tráfego. Criptografia em repouso é responsabilidade do banco/armazenamento gerenciado e das chaves administradas.
 - Conexões do sandbox usam senha e definem `GSS Encryption Mode=Disable` para não iniciar uma negociação Kerberos que o ambiente não provisiona. Isso não substitui TLS: conexões fora de `Development` continuam exigindo `SslMode=VerifyFull`. Se a plataforma aprovada fornecer GSS/Kerberos, a opção poderá ser configurada explicitamente.

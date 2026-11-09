@@ -13,7 +13,7 @@ $variables = [ordered]@{
     Financial__ApiRole = "read"
     Jwt__Issuer = "financial-local"
     Jwt__Audience = "financial-api"
-    Jwt__SigningKey = "local-only-change-this-key-to-a-random-32-byte-value"
+    Jwt__SigningKey = (& (Join-Path $PSScriptRoot "Get-FinancialLocalJwtKey.ps1"))
 }
 $previousValues = @{}
 foreach ($name in $variables.Keys) {

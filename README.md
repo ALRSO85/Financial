@@ -39,7 +39,7 @@ O perfil opcional `monitoring` adiciona sondagens Prometheus/Blackbox, regras de
 
 O perfil opcional `applications` constrói as duas APIs e o projetor em containers e usa bancos dedicados para ensaio. O `Dockerfile` publica uma imagem .NET multi-stage não-root. Configure os segredos no `.env` e siga o provisionamento isolado descrito em [`docs/runbook.md`](docs/runbook.md); não publique as APIs de desenvolvimento na rede.
 
-O schema inicial é aplicado no início da API; as migrations ficam em `src/Financial.Infrastructure/Migrations`. O adapter JSON permanece disponível somente para testes e isolamento local. No PowerShell, inicie a API pelo script, que configura valores JWT temporários e a conexão local apenas para desenvolvimento:
+O schema inicial é aplicado no início da API; as migrations ficam em `src/Financial.Infrastructure/Migrations`. O adapter JSON permanece disponível somente para testes e isolamento local. No PowerShell, inicie a API pelo script, que lê uma chave JWT aleatória de 256 bits, criada uma vez em uma pasta do usuário fora do repositório e protegida pelas permissões do sistema operacional. O gerador de token e as APIs locais usam a mesma chave; ela é exclusiva para `Development`:
 
 No primeiro terminal:
 
@@ -49,13 +49,13 @@ powershell.exe -ExecutionPolicy Bypass -File .\scripts\Start-FinancialApi.ps1
 
 No Linux ou macOS, use `pwsh -File ./scripts/Start-FinancialApi.ps1`. No Windows, a opção `-ExecutionPolicy Bypass` vale somente para esse processo e não altera a política permanente do sistema. A API de escrita usa `http://localhost:5080`.
 
-Em um segundo terminal, gere um token curto. O script define os valores JWT locais usados pela API. No Windows:
+Em um segundo terminal, gere um token curto. O script lê a mesma chave local protegida. No Windows:
 
 ```powershell
 $token = powershell.exe -ExecutionPolicy Bypass -File .\scripts\New-LocalJwt.ps1 -Subject "cliente-123"
 ```
 
-No Linux ou macOS, use `$token = pwsh -File ./scripts/New-LocalJwt.ps1 -Subject "cliente-123"`. O token vale por cinco minutos e inclui os escopos locais de leitura e escrita.
+No Linux ou macOS, use `$token = pwsh -File ./scripts/New-LocalJwt.ps1 -Subject "cliente-123"`. O token vale por cinco minutos e inclui os escopos locais de leitura e escrita. A chave persistida pode ser removida em `%LOCALAPPDATA%\FinancialChallenge\local-jwt-signing-key` no Windows ou em `$XDG_CONFIG_HOME/FinancialChallenge/local-jwt-signing-key` (por padrão, `~/.config/FinancialChallenge/local-jwt-signing-key`) no Linux/macOS; ao ser removida, uma nova chave aleatória é criada. Não copie essa chave para ambientes compartilhados ou de produção.
 
 Em terminais separados, inicie também a API de leitura e o projetor:
 
@@ -64,7 +64,7 @@ powershell.exe -ExecutionPolicy Bypass -File .\scripts\Start-FinancialReadApi.ps
 powershell.exe -ExecutionPolicy Bypass -File .\scripts\Start-FinancialProjector.ps1
 ```
 
-A API de leitura escuta em `http://localhost:5081`. Cada API tem Swagger em `/swagger`; a de escrita recebe `POST`, e a de leitura atende `GET`. A projeção é eventualmente consistente. As respostas de saldo incluem `dataAsOf`, o instante mais recente aplicado; aguarde o projetor após registrar a primeira conta ou lançamento. O token local de desenvolvimento é previsível e não deve ser reutilizado fora desse ambiente.
+A API de leitura escuta em `http://localhost:5081`. Cada API tem Swagger em `/swagger`; a de escrita recebe `POST`, e a de leitura atende `GET`. A projeção é eventualmente consistente. As respostas de saldo incluem `dataAsOf`, o instante mais recente aplicado; aguarde o projetor após registrar a primeira conta ou lançamento. A chave aleatória local existe somente para desenvolvimento e não deve ser reutilizada fora desse ambiente.
 
 Criar conta:
 

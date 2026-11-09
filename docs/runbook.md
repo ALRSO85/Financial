@@ -43,7 +43,7 @@ As sondagens TCP para as portas publicadas do PostgreSQL (5432 e 5433) são auto
     service: read
 ```
 
-No arquivo de readiness, use os mesmos hosts com `/health/ready`. Se usar endereços do host, `host.docker.internal` é mapeado para o endereço configurado em `MONITORING_HOST_ADDRESS`. Garanta que o listener e o firewall permitam acesso apenas da rede de monitoramento; não exponha uma API de desenvolvimento com a chave JWT previsível. O Prometheus atualiza os arquivos de descoberta a cada 30 segundos. A regra `FinancialApiProbesNotConfigured` avisa quando as sondagens das APIs ainda não foram cadastradas.
+No arquivo de readiness, use os mesmos hosts com `/health/ready`. Se usar endereços do host, `host.docker.internal` é mapeado para o endereço configurado em `MONITORING_HOST_ADDRESS`. Garanta que o listener e o firewall permitam acesso apenas da rede de monitoramento; não exponha uma API de desenvolvimento nem sua chave JWT local. O Prometheus atualiza os arquivos de descoberta a cada 30 segundos. A regra `FinancialApiProbesNotConfigured` avisa quando as sondagens das APIs ainda não foram cadastradas.
 
 Abra `http://127.0.0.1:9090/alerts` e `http://127.0.0.1:9093` no próprio servidor. Os alertas cobrem indisponibilidade das APIs configuradas, falha TCP dos bancos, resposta de readiness degradada na leitura e latência acima da premissa de 500 ms. O Alertmanager não envia notificações externas por padrão; configure um receiver aprovado de e-mail, chat ou webhook antes de depender de aviso humano. Os limites são premissas operacionais do exercício, não SLOs aprovados. A configuração e a UI não fornecem alta disponibilidade para o próprio monitoramento.
 
