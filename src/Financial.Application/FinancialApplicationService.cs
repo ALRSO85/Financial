@@ -34,10 +34,11 @@ public sealed class FinancialApplicationService(IFinancialRepository repository,
 
         var result = await repository.ExecuteWriteAsync<PostResult>(async (session, token) =>
         {
-            var account = await session.GetAccountForUpdateAsync(accountId, ownerReference, token);
-            if (account is null) throw new FinancialApplicationException("Conta não encontrada.", 404);
+            var lockedAccount = await session.LockAccountAsync(accountId, ownerReference, request.IdempotencyKey, token);
+            if (lockedAccount is null) throw new FinancialApplicationException("Conta não encontrada.", 404);
 
-            var existing = await session.FindByIdempotencyKeyAsync(accountId, request.IdempotencyKey, token);
+            var account = lockedAccount.Account;
+            var existing = lockedAccount.ExistingEntry;
             if (existing is not null)
             {
                 EnsureSameRequest(existing, type, amount, request.Description);
@@ -50,10 +51,9 @@ public sealed class FinancialApplicationService(IFinancialRepository repository,
             catch (InsufficientFundsException ex) { throw new FinancialApplicationException(ex.Message, 422); }
             catch (DomainRuleException ex) { throw new FinancialApplicationException(ex.Message, 422); }
 
-            var lastRecordedAt = await session.GetLastRecordedAtAsync(accountId, account.CreatedAt, token);
-            var occurredAt = NextOccurrenceAt(lastRecordedAt);
+            var occurredAt = NextOccurrenceAt(lockedAccount.LastRecordedAt);
             var entry = FinancialEntry.Create(accountId, type, amount, request.IdempotencyKey, request.Description, occurredAt);
-            await session.UpdateAccountAsync(updatedAccount, token);
+            await session.UpdateAccountAsync(updatedAccount, occurredAt, token);
             await session.AddEntryAsync(entry, token);
             return new(ToResponse(entry), true);
         }, ct);

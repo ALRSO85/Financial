@@ -49,6 +49,7 @@ public sealed class PostgresFinancialRepository(NpgsqlDataSource dataSource) : I
         try
         {
             var result = await operation(session, cancellationToken);
+            await session.FlushAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return result;
         }
@@ -75,114 +76,106 @@ public sealed class PostgresFinancialRepository(NpgsqlDataSource dataSource) : I
     private sealed class PostgresWriteSession(NpgsqlConnection connection, NpgsqlTransaction transaction) : IFinancialWriteSession
     {
         private readonly Dictionary<Guid, Account> _lockedAccounts = [];
+        private readonly Dictionary<Guid, DateTimeOffset> _lastOccurredAtByAccount = [];
+        private readonly List<NpgsqlBatchCommand> _pendingCommands = [];
 
-        public async Task AddAccountAsync(Account account, CancellationToken cancellationToken)
+        public Task AddAccountAsync(Account account, CancellationToken cancellationToken)
         {
-            await using (var command = new NpgsqlCommand(
-                "INSERT INTO financial_accounts (id, owner_reference, created_at, balance_cents) VALUES (@id, @owner, @created, @balance)",
-                connection, transaction))
-            {
-                command.Parameters.AddWithValue("id", account.Id);
-                command.Parameters.AddWithValue("owner", account.OwnerReference);
-                command.Parameters.AddWithValue("created", account.CreatedAt.ToUniversalTime());
-                command.Parameters.AddWithValue("balance", account.Balance.Cents);
-                await command.ExecuteNonQueryAsync(cancellationToken);
-            }
+            _lockedAccounts[account.Id] = account;
+            var insert = new NpgsqlBatchCommand(
+                "INSERT INTO financial_accounts (id, owner_reference, created_at, balance_cents, last_occurred_at) " +
+                "VALUES (@id, @owner, @created, @balance, @created)");
+            insert.Parameters.AddWithValue("id", account.Id);
+            insert.Parameters.AddWithValue("owner", account.OwnerReference);
+            insert.Parameters.AddWithValue("created", account.CreatedAt.ToUniversalTime());
+            insert.Parameters.AddWithValue("balance", account.Balance.Cents);
+            _pendingCommands.Add(insert);
 
             var payload = JsonSerializer.Serialize(new AccountProjectionEvent(account.Id, account.OwnerReference,
                 account.CreatedAt, account.Balance.Cents), JsonOptions);
-            await AddOutboxEventAsync(Guid.NewGuid(), "account.opened", payload, account.CreatedAt, cancellationToken);
-            await RecordAuditAsync("account.opened", account.Id, null, cancellationToken);
+            AddOutboxEvent(Guid.NewGuid(), "account.opened", payload, account.CreatedAt);
+            AddAuditEvent(account.OwnerReference, "account.opened", account.Id, null);
+            return Task.CompletedTask;
         }
 
-        public async Task<Account?> GetAccountForUpdateAsync(Guid accountId, string ownerReference, CancellationToken cancellationToken)
+        public async Task<LockedAccountContext?> LockAccountAsync(Guid accountId, string ownerReference,
+            string idempotencyKey, CancellationToken cancellationToken)
         {
-            await using var command = new NpgsqlCommand(
-                "SELECT id, owner_reference, created_at, balance_cents FROM financial_accounts " +
-                "WHERE id = @id AND owner_reference = @owner FOR UPDATE", connection, transaction);
-            command.Parameters.AddWithValue("id", accountId);
-            command.Parameters.AddWithValue("owner", ownerReference);
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            if (!await reader.ReadAsync(cancellationToken)) return null;
+            await using var batch = new NpgsqlBatch(connection, transaction);
+            var lockAccount = new NpgsqlBatchCommand(
+                "SELECT id, owner_reference, created_at, balance_cents, last_occurred_at FROM financial_accounts " +
+                "WHERE id = @id AND owner_reference = @owner FOR UPDATE");
+            lockAccount.Parameters.AddWithValue("id", accountId);
+            lockAccount.Parameters.AddWithValue("owner", ownerReference);
+            batch.BatchCommands.Add(lockAccount);
 
-            var account = new Account(reader.GetGuid(0), reader.GetString(1), reader.GetFieldValue<DateTimeOffset>(2),
-                new Money(reader.GetInt64(3)));
-            _lockedAccounts[account.Id] = account;
-            return account;
-        }
-
-        public async Task<FinancialEntry?> FindByIdempotencyKeyAsync(Guid accountId, string idempotencyKey,
-            CancellationToken cancellationToken)
-        {
-            await using var command = new NpgsqlCommand(
+            var findIdempotent = new NpgsqlBatchCommand(
                 "SELECT id, account_id, entry_type, amount_cents, signed_amount_cents, idempotency_key, description, occurred_at " +
-                "FROM financial_entries WHERE account_id = @account AND idempotency_key = @key",
-                connection, transaction);
-            command.Parameters.AddWithValue("account", accountId);
-            command.Parameters.AddWithValue("key", idempotencyKey);
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            return await reader.ReadAsync(cancellationToken) ? ReadEntry(reader) : null;
-        }
+                "FROM financial_entries WHERE account_id = @account AND idempotency_key = @key");
+            findIdempotent.Parameters.AddWithValue("account", accountId);
+            findIdempotent.Parameters.AddWithValue("key", idempotencyKey);
+            batch.BatchCommands.Add(findIdempotent);
 
-        public async Task<DateTimeOffset> GetLastRecordedAtAsync(Guid accountId, DateTimeOffset createdAt,
-            CancellationToken cancellationToken)
-        {
-            await using var command = new NpgsqlCommand(
-                "SELECT COALESCE(MAX(occurred_at), @created) FROM financial_entries WHERE account_id = @account",
-                connection, transaction);
-            command.Parameters.AddWithValue("account", accountId);
-            command.Parameters.AddWithValue("created", createdAt.ToUniversalTime());
-            var result = await command.ExecuteScalarAsync(cancellationToken)
-                ?? throw new InvalidDataException("Não foi possível obter o instante do último lançamento.");
-            return result switch
+            await using var reader = await batch.ExecuteReaderAsync(cancellationToken);
+            Account? account = null;
+            DateTimeOffset? lastRecordedAt = null;
+            if (await reader.ReadAsync(cancellationToken))
             {
-                DateTimeOffset instant => instant,
-                DateTime instant => new DateTimeOffset(DateTime.SpecifyKind(instant, DateTimeKind.Utc)),
-                _ => throw new InvalidDataException("O banco retornou um tipo inválido para o instante do último lançamento.")
-            };
+                account = new Account(reader.GetGuid(0), reader.GetString(1), reader.GetFieldValue<DateTimeOffset>(2),
+                    new Money(reader.GetInt64(3)));
+                lastRecordedAt = reader.GetFieldValue<DateTimeOffset>(4);
+            }
+
+            await reader.NextResultAsync(cancellationToken);
+            var existingEntry = await reader.ReadAsync(cancellationToken) ? ReadEntry(reader) : null;
+            if (account is null) return null;
+
+            _lockedAccounts[account.Id] = account;
+            _lastOccurredAtByAccount[account.Id] = lastRecordedAt!.Value;
+            return new LockedAccountContext(account, existingEntry, lastRecordedAt.Value);
         }
 
-        public async Task UpdateAccountAsync(Account account, CancellationToken cancellationToken)
+        public Task UpdateAccountAsync(Account account, DateTimeOffset lastRecordedAt, CancellationToken cancellationToken)
         {
             if (!_lockedAccounts.ContainsKey(account.Id))
                 throw new InvalidOperationException("A conta deve ser bloqueada antes de ser atualizada.");
 
-            await using var command = new NpgsqlCommand(
-                "UPDATE financial_accounts SET balance_cents = @balance WHERE id = @id", connection, transaction);
+            var command = new NpgsqlBatchCommand(
+                "UPDATE financial_accounts SET balance_cents = @balance, last_occurred_at = @lastOccurredAt WHERE id = @id");
             command.Parameters.AddWithValue("id", account.Id);
             command.Parameters.AddWithValue("balance", account.Balance.Cents);
-            if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
-                throw new InvalidOperationException("A conta deixou de existir durante a transação.");
+            command.Parameters.AddWithValue("lastOccurredAt", lastRecordedAt.ToUniversalTime());
+            _pendingCommands.Add(command);
             _lockedAccounts[account.Id] = account;
+            _lastOccurredAtByAccount[account.Id] = lastRecordedAt;
+            return Task.CompletedTask;
         }
 
-        public async Task AddEntryAsync(FinancialEntry entry, CancellationToken cancellationToken)
+        public Task AddEntryAsync(FinancialEntry entry, CancellationToken cancellationToken)
         {
             if (!_lockedAccounts.TryGetValue(entry.AccountId, out var account))
                 throw new InvalidOperationException("A conta deve ser bloqueada antes de inserir um lançamento.");
 
-            await using (var command = new NpgsqlCommand(
+            var command = new NpgsqlBatchCommand(
                 "INSERT INTO financial_entries " +
                 "(id, account_id, entry_type, amount_cents, signed_amount_cents, idempotency_key, description, occurred_at) " +
-                "VALUES (@id, @account, @type, @amount, @signed, @key, @description, @occurred)",
-                connection, transaction))
-            {
-                command.Parameters.AddWithValue("id", entry.Id);
-                command.Parameters.AddWithValue("account", entry.AccountId);
-                command.Parameters.AddWithValue("type", entry.Type == TransactionType.Credit ? "credit" : "debit");
-                command.Parameters.AddWithValue("amount", entry.Amount.Cents);
-                command.Parameters.AddWithValue("signed", entry.SignedAmount.Cents);
-                command.Parameters.AddWithValue("key", entry.IdempotencyKey);
-                command.Parameters.AddWithValue("description", (object?)entry.Description ?? DBNull.Value);
-                command.Parameters.AddWithValue("occurred", entry.OccurredAt.ToUniversalTime());
-                await command.ExecuteNonQueryAsync(cancellationToken);
-            }
+                "VALUES (@id, @account, @type, @amount, @signed, @key, @description, @occurred)");
+            command.Parameters.AddWithValue("id", entry.Id);
+            command.Parameters.AddWithValue("account", entry.AccountId);
+            command.Parameters.AddWithValue("type", entry.Type == TransactionType.Credit ? "credit" : "debit");
+            command.Parameters.AddWithValue("amount", entry.Amount.Cents);
+            command.Parameters.AddWithValue("signed", entry.SignedAmount.Cents);
+            command.Parameters.AddWithValue("key", entry.IdempotencyKey);
+            command.Parameters.AddWithValue("description", (object?)entry.Description ?? DBNull.Value);
+            command.Parameters.AddWithValue("occurred", entry.OccurredAt.ToUniversalTime());
+            _pendingCommands.Add(command);
 
             var payload = JsonSerializer.Serialize(new TransactionProjectionEvent(account.Id, account.OwnerReference,
                 account.CreatedAt, account.Balance.Cents, entry.Id, entry.Type == TransactionType.Credit ? "credit" : "debit",
                 entry.Amount.Cents, entry.SignedAmount.Cents, entry.IdempotencyKey, entry.Description, entry.OccurredAt), JsonOptions);
-            await AddOutboxEventAsync(entry.Id, "transaction.posted", payload, entry.OccurredAt, cancellationToken);
-            await RecordAuditAsync("transaction.posted", entry.AccountId, entry.Id, cancellationToken);
+            AddOutboxEvent(entry.Id, "transaction.posted", payload, entry.OccurredAt);
+            AddAuditEvent(account.OwnerReference, "transaction.posted", entry.AccountId, entry.Id);
+            return Task.CompletedTask;
         }
 
         public async Task RecordAuditAsync(string action, Guid accountId, Guid? transactionId,
@@ -195,38 +188,45 @@ public sealed class PostgresFinancialRepository(NpgsqlDataSource dataSource) : I
                 lookup.Parameters.AddWithValue("id", accountId);
                 var owner = await lookup.ExecuteScalarAsync(cancellationToken) as string;
                 if (owner is null) throw new InvalidOperationException("Não foi possível auditar uma conta inexistente.");
-                await InsertAuditAsync(owner, action, accountId, transactionId, cancellationToken);
+                AddAuditEvent(owner, action, accountId, transactionId);
                 return;
             }
-            await InsertAuditAsync(account.OwnerReference, action, accountId, transactionId, cancellationToken);
+            AddAuditEvent(account.OwnerReference, action, accountId, transactionId);
         }
 
-        private async Task InsertAuditAsync(string actorReference, string action, Guid accountId, Guid? transactionId,
-            CancellationToken cancellationToken)
+        public async Task FlushAsync(CancellationToken cancellationToken)
         {
-            await using var audit = new NpgsqlCommand(
+            if (_pendingCommands.Count == 0) return;
+            await using var batch = new NpgsqlBatch(connection, transaction);
+            foreach (var command in _pendingCommands)
+                batch.BatchCommands.Add(command);
+            await batch.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        private void AddAuditEvent(string actorReference, string action, Guid accountId, Guid? transactionId)
+        {
+            var audit = new NpgsqlBatchCommand(
                 "INSERT INTO financial_audit_events (audit_id, actor_reference, action, account_id, transaction_id, occurred_at) " +
-                "VALUES (@id, @actor, @action, @account, @transaction, @occurred)", connection, transaction);
+                "VALUES (@id, @actor, @action, @account, @transaction, @occurred)");
             audit.Parameters.AddWithValue("id", Guid.NewGuid());
             audit.Parameters.AddWithValue("actor", actorReference);
             audit.Parameters.AddWithValue("action", action);
             audit.Parameters.AddWithValue("account", accountId);
             audit.Parameters.AddWithValue("transaction", (object?)transactionId ?? DBNull.Value);
             audit.Parameters.AddWithValue("occurred", DateTimeOffset.UtcNow);
-            await audit.ExecuteNonQueryAsync(cancellationToken);
+            _pendingCommands.Add(audit);
         }
 
-        private async Task AddOutboxEventAsync(Guid eventId, string eventType, string payload, DateTimeOffset createdAt,
-            CancellationToken cancellationToken)
+        private void AddOutboxEvent(Guid eventId, string eventType, string payload, DateTimeOffset createdAt)
         {
-            await using var command = new NpgsqlCommand(
+            var command = new NpgsqlBatchCommand(
                 "INSERT INTO financial_outbox (event_id, event_type, payload, created_at) " +
-                "VALUES (@id, @type, CAST(@payload AS jsonb), @created)", connection, transaction);
+                "VALUES (@id, @type, CAST(@payload AS jsonb), @created)");
             command.Parameters.AddWithValue("id", eventId);
             command.Parameters.AddWithValue("type", eventType);
             command.Parameters.AddWithValue("payload", NpgsqlDbType.Text, payload);
             command.Parameters.AddWithValue("created", createdAt.ToUniversalTime());
-            await command.ExecuteNonQueryAsync(cancellationToken);
+            _pendingCommands.Add(command);
         }
     }
 

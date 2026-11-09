@@ -13,13 +13,14 @@ public interface IFinancialRepository
 public interface IFinancialWriteSession
 {
     Task AddAccountAsync(Account account, CancellationToken cancellationToken);
-    Task<Account?> GetAccountForUpdateAsync(Guid accountId, string ownerReference, CancellationToken cancellationToken);
-    Task<FinancialEntry?> FindByIdempotencyKeyAsync(Guid accountId, string idempotencyKey, CancellationToken cancellationToken);
-    Task<DateTimeOffset> GetLastRecordedAtAsync(Guid accountId, DateTimeOffset createdAt, CancellationToken cancellationToken);
-    Task UpdateAccountAsync(Account account, CancellationToken cancellationToken);
+    Task<LockedAccountContext?> LockAccountAsync(Guid accountId, string ownerReference, string idempotencyKey,
+        CancellationToken cancellationToken);
+    Task UpdateAccountAsync(Account account, DateTimeOffset lastRecordedAt, CancellationToken cancellationToken);
     Task AddEntryAsync(FinancialEntry entry, CancellationToken cancellationToken);
     Task RecordAuditAsync(string action, Guid accountId, Guid? transactionId, CancellationToken cancellationToken);
 }
+
+public sealed record LockedAccountContext(Account Account, FinancialEntry? ExistingEntry, DateTimeOffset LastRecordedAt);
 
 public interface IFinancialReadRepository
 {

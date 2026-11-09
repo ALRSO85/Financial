@@ -73,27 +73,19 @@ public sealed class JsonFinancialRepository(string filePath) : IFinancialReposit
             return Task.CompletedTask;
         }
 
-        public Task<Account?> GetAccountForUpdateAsync(Guid accountId, string ownerReference, CancellationToken cancellationToken)
+        public Task<LockedAccountContext?> LockAccountAsync(Guid accountId, string ownerReference, string idempotencyKey,
+            CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(snapshot.Accounts.SingleOrDefault(x => x.Id == accountId && x.OwnerReference == ownerReference));
-        }
-
-        public Task<FinancialEntry?> FindByIdempotencyKeyAsync(Guid accountId, string idempotencyKey, CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(snapshot.Entries.SingleOrDefault(x => x.AccountId == accountId && x.IdempotencyKey == idempotencyKey));
-        }
-
-        public Task<DateTimeOffset> GetLastRecordedAtAsync(Guid accountId, DateTimeOffset createdAt, CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
+            var account = snapshot.Accounts.SingleOrDefault(x => x.Id == accountId && x.OwnerReference == ownerReference);
+            if (account is null) return Task.FromResult<LockedAccountContext?>(null);
+            var existing = snapshot.Entries.SingleOrDefault(x => x.AccountId == accountId && x.IdempotencyKey == idempotencyKey);
             var lastRecordedAt = snapshot.Entries.Where(x => x.AccountId == accountId)
-                .Select(x => x.OccurredAt).DefaultIfEmpty(createdAt).Max();
-            return Task.FromResult(lastRecordedAt);
+                .Select(x => x.OccurredAt).DefaultIfEmpty(account.CreatedAt).Max();
+            return Task.FromResult<LockedAccountContext?>(new(account, existing, lastRecordedAt));
         }
 
-        public Task UpdateAccountAsync(Account account, CancellationToken cancellationToken)
+        public Task UpdateAccountAsync(Account account, DateTimeOffset lastRecordedAt, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var index = snapshot.Accounts.FindIndex(x => x.Id == account.Id);

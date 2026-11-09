@@ -8,5 +8,7 @@ public sealed class PostgresFinancialDatabaseInitializer(NpgsqlDataSource dataSo
     {
         await PostgresMigrationRunner.ApplyAsync(dataSource, "001_InitialSchema", 8_416_072_312, cancellationToken);
         await PostgresMigrationRunner.ApplyAsync(dataSource, "003_AuditAndDeadLetters", 8_416_072_312, cancellationToken);
+        await PostgresMigrationRunner.ApplyAsync(dataSource, "004_RemoveRedundantEntryIndexes", 8_416_072_312, cancellationToken);
+        await PostgresMigrationRunner.ApplyAsync(dataSource, "005_AccountLastOccurredAt", 8_416_072_312, cancellationToken);
     }
 }
