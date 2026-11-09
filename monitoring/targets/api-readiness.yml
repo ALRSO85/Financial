@@ -1,0 +1,3 @@
+# Configure one target per API deployment. The target must be reachable from
+# the Docker network and expose /health/ready without authentication.
+[]

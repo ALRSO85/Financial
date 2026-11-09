@@ -35,6 +35,8 @@ docker compose up -d financial-write-db financial-read-db
 
 Para diagnóstico local com traces, métricas e logs OpenTelemetry, consulte a opção `observability` em [`docs/runbook.md`](docs/runbook.md). O perfil não inicia junto com os bancos por padrão.
 
+O perfil opcional `monitoring` adiciona sondagens Prometheus/Blackbox, regras de alerta e a interface local do Alertmanager. As sondagens das APIs precisam ser configuradas por ambiente; as portas TCP do PostgreSQL são sondadas automaticamente. Consulte [`docs/runbook.md`](docs/runbook.md) para subir o perfil sem recriar os bancos e para configurar acesso seguro aos endpoints.
+
 O schema inicial é aplicado no início da API; as migrations ficam em `src/Financial.Infrastructure/Migrations`. O adapter JSON permanece disponível somente para testes e isolamento local. No PowerShell, inicie a API pelo script, que configura valores JWT temporários e a conexão local apenas para desenvolvimento:
 
 No primeiro terminal:

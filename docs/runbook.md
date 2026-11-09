@@ -22,6 +22,33 @@ O serviço `financial-observability` fica no perfil Compose `observability` e us
 
 As portas usam HTTP/gRPC sem TLS no Compose demonstrativo; restrinja-as à máquina local ou a uma rede privada controlada. Para produção, use um coletor/backend operado, TLS, gestão e rotação de chaves, retenção aprovada e alertas. Consulte a [documentação do Aspire Dashboard standalone](https://aspire.dev/dashboard/standalone/) e as [considerações de segurança](https://aspire.dev/dashboard/security-considerations/).
 
+### Prometheus, sondagens e alertas
+
+O perfil Compose `monitoring` inclui Prometheus, Blackbox Exporter e Alertmanager. Prometheus retém métricas por 15 dias no volume `financial-prometheus-data`; Alertmanager guarda estado de silêncios no volume `financial-alertmanager-data`. Os dois painéis são publicados somente em loopback por padrão (`127.0.0.1:9090` e `127.0.0.1:9093`), pois não têm autenticação nativa habilitada neste exercício. Não altere o bind para a rede privada sem proteger o acesso com firewall e proxy autenticado.
+
+Para iniciar apenas os componentes de monitoramento no host de ensaio, sem recriar os bancos do Compose:
+
+```powershell
+docker compose -p financial-monitoring --profile monitoring up -d financial-blackbox-exporter financial-alertmanager financial-prometheus
+```
+
+As sondagens TCP para as portas publicadas do PostgreSQL (5432 e 5433) são automáticas. Elas verificam conectividade TCP, não autenticação, `pg_isready` ou consistência do banco. Se as portas estiverem publicadas em um endereço específico do host, defina `MONITORING_HOST_ADDRESS` com esse endereço no `.env`; o padrão `host-gateway` usa o gateway Docker. No servidor de ensaio, onde os bancos estão vinculados ao IP LAN `192.168.88.200`, configure `MONITORING_HOST_ADDRESS=192.168.88.200`. As sondagens das APIs ficam opt-in para não gerar falsos alertas quando a aplicação não está implantada no mesmo host. Configure `monitoring/targets/api-liveness.yml` e `monitoring/targets/api-readiness.yml` com cada endpoint alcançável a partir da rede Docker, por exemplo:
+
+```yaml
+- targets: [http://financial-write-api:5080/health/live]
+  labels:
+    service: write
+- targets: [http://financial-read-api:5081/health/live]
+  labels:
+    service: read
+```
+
+No arquivo de readiness, use os mesmos hosts com `/health/ready`. Se usar endereços do host, `host.docker.internal` é mapeado para o gateway do host pelo Compose. Garanta que o listener e o firewall permitam acesso apenas da rede de monitoramento; não exponha uma API de desenvolvimento com a chave JWT previsível. O Prometheus atualiza os arquivos de descoberta a cada 30 segundos. A regra `FinancialApiProbesNotConfigured` avisa quando as sondagens das APIs ainda não foram cadastradas.
+
+Abra `http://127.0.0.1:9090/alerts` e `http://127.0.0.1:9093` no próprio servidor. Os alertas cobrem indisponibilidade das APIs configuradas, falha TCP dos bancos, resposta de readiness degradada na leitura e latência acima da premissa de 500 ms. O Alertmanager não envia notificações externas por padrão; configure um receiver aprovado de e-mail, chat ou webhook antes de depender de aviso humano. Os limites são premissas operacionais do exercício, não SLOs aprovados. A configuração e a UI não fornecem alta disponibilidade para o próprio monitoramento.
+
+Em 09/11/2026, o perfil foi iniciado no servidor `192.168.88.200` como projeto Compose isolado, sem recriar os bancos existentes. Prometheus, Blackbox Exporter e Alertmanager ficaram em execução. `promtool check config` confirmou o arquivo Prometheus e encontrou sete regras válidas; `amtool check-config` aceitou o arquivo do Alertmanager. A consulta Prometheus retornou `probe_success=1` para as portas 5432 e 5433, e os alvos apareceram como `up`. A primeira tentativa falhou porque os bancos publicavam portas somente no IP LAN e o gateway Docker não alcançava esse bind; depois de definir `MONITORING_HOST_ADDRESS=192.168.88.200`, as sondagens passaram. Como nenhuma API está implantada nesse host, `FinancialApiProbesNotConfigured` chegou ao Alertmanager conforme esperado. A integração ainda não foi testada com endpoints reais das APIs nem com notificações externas.
+
 Em 09/11/2026, o perfil foi iniciado no host Docker de ensaio, vinculado somente ao endereço privado desse host. A UI respondeu HTTP 200 e as portas OTLP gRPC/HTTP ficaram acessíveis. Com chaves diferentes para ingestão e consulta, uma API de escrita apontada para a base PostgreSQL sintética enviou traces, métricas e logs. A API de telemetria confirmou o recurso `Financial.write`, `hasTraces=true`, `hasMetrics=true`, `hasLogs=true`, 12 spans e um registro de log. Entre os spans recebidos estavam `financial.database.account_lock`, `financial.database.write_batch` e `financial.database.commit`. A requisição de smoke test criou apenas um crédito de um centavo na base dedicada; outra chamada intencional a uma conta inexistente gerou o log `404` sem registrar ID. O dashboard permanece sem volume de persistência, portanto seus dados somem quando o container é recriado; a configuração e as chaves ficam no diretório privado do host, fora do repositório.
 
 O `docker-compose.yml` guarda dados em volumes locais sem replicação. Para reiniciar um ambiente de teste limpo, pare os containers e remova apenas os volumes deste compose depois de confirmar que não há dados necessários. Não use os comandos de limpeza local em ambiente compartilhado.

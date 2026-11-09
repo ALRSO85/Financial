@@ -1,0 +1,65 @@
+groups:
+  - name: financial-availability
+    rules:
+      - alert: FinancialApiProbesNotConfigured
+        expr: absent(up{job="financial-api-liveness"}) or absent(up{job="financial-api-readiness"})
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Sondagens das APIs não configuradas
+          description: Cadastre os endpoints de liveness e readiness das APIs nos arquivos monitoring/targets/api-*.yml.
+
+      - alert: FinancialWriteApiUnavailable
+        expr: probe_success{job="financial-api-liveness",service="write"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: API de escrita indisponível
+          description: A sondagem HTTP de /health/live da API de escrita falhou por pelo menos 1 minuto.
+
+      - alert: FinancialReadApiUnavailable
+        expr: probe_success{job="financial-api-liveness",service="read"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: API de leitura indisponível
+          description: A sondagem HTTP de /health/live da API de leitura falhou por pelo menos 1 minuto.
+
+      - alert: FinancialWriteDatabaseUnavailable
+        expr: probe_success{job="financial-postgres-tcp",service="write-database"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: PostgreSQL de escrita inacessível
+          description: A conexão TCP à porta publicada do PostgreSQL de escrita falhou por pelo menos 1 minuto.
+
+      - alert: FinancialReadDatabaseUnavailable
+        expr: probe_success{job="financial-postgres-tcp",service="read-database"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: PostgreSQL de leitura inacessível
+          description: A conexão TCP à porta publicada do PostgreSQL de leitura falhou por pelo menos 1 minuto.
+
+      - alert: FinancialReadProjectionDegraded
+        expr: probe_http_status_code{job="financial-api-readiness",service="read"} == 200 and probe_success{job="financial-api-readiness",service="read"} == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Projeção financeira de leitura degradada
+          description: A API de leitura respondeu HTTP 200, mas o corpo de prontidão indicou heartbeat, backlog ou dead letter fora dos limites.
+
+      - alert: FinancialApiLatencyAboveAssumption
+        expr: probe_duration_seconds{job="financial-api-liveness"} > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Latência da API acima da premissa
+          description: A sondagem HTTP ultrapassou 500 ms continuamente. Esse valor é premissa de exercício, não SLO aprovado.

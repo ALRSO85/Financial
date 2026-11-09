@@ -1,0 +1,12 @@
+route:
+  receiver: local-console
+  group_by: [alertname, service]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+# Empty integration keeps alerts visible in the local Alertmanager UI and API.
+# Configure an approved email, chat, or webhook receiver before relying on
+# human notification; this file deliberately does not send data externally.
+receivers:
+  - name: local-console
