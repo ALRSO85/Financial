@@ -1,3 +1,6 @@
-# Configure one target per API deployment. The target must be reachable from
-# the Docker network and expose /health/ready without authentication.
-[]
+- targets: [http://financial-write-api:8080/health/ready]
+  labels:
+    service: write
+- targets: [http://financial-read-api:8080/health/ready]
+  labels:
+    service: read

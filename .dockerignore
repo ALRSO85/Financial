@@ -1,0 +1,10 @@
+.git/
+.github/
+**/bin/
+**/obj/
+**/TestResults/
+.env
+.env.*
+!.env.example
+financial.dump
+*.dump

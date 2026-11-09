@@ -53,6 +53,77 @@ services:
       - "${OBSERVABILITY_BIND_ADDRESS:-127.0.0.1}:4318:18890"
     restart: unless-stopped
 
+  financial-write-api:
+    profiles: ["applications"]
+    image: financial-write-api:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PROJECT_PATH: src/Financial.Api/Financial.Api.csproj
+        APP_DLL: Financial.Api.dll
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      Financial__ApiRole: write
+      Jwt__Issuer: financial-sandbox
+      Jwt__Audience: financial-sandbox-api
+      Jwt__SigningKey: ${FINANCIAL_JWT_SIGNING_KEY:-}
+      ConnectionStrings__FinancialWrite: "Host=financial-write-db;Port=5432;Database=financial_write_monitoring;Username=financial_write_app;Password=${FINANCIAL_WRITE_DB_PASSWORD:-};Timeout=5;Command Timeout=30"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_EXPORTER_OTLP_HEADERS: "x-otlp-api-key=${ASPIRE_DASHBOARD_OTLP_API_KEY:-}"
+    expose: ["8080"]
+    extra_hosts:
+      - "host.docker.internal:${MONITORING_HOST_ADDRESS:-host-gateway}"
+    networks: [default, financial-database]
+    restart: unless-stopped
+
+  financial-read-api:
+    profiles: ["applications"]
+    image: financial-read-api:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PROJECT_PATH: src/Financial.Api/Financial.Api.csproj
+        APP_DLL: Financial.Api.dll
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      Financial__ApiRole: read
+      Jwt__Issuer: financial-sandbox
+      Jwt__Audience: financial-sandbox-api
+      Jwt__SigningKey: ${FINANCIAL_JWT_SIGNING_KEY:-}
+      ConnectionStrings__FinancialRead: "Host=financial-read-db;Port=5432;Database=financial_read_monitoring;Username=financial_read_app;Password=${FINANCIAL_READ_DB_PASSWORD:-};Timeout=5;Command Timeout=30"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_EXPORTER_OTLP_HEADERS: "x-otlp-api-key=${ASPIRE_DASHBOARD_OTLP_API_KEY:-}"
+    expose: ["8080"]
+    extra_hosts:
+      - "host.docker.internal:${MONITORING_HOST_ADDRESS:-host-gateway}"
+    networks: [default, financial-database]
+    restart: unless-stopped
+
+  financial-projector:
+    profiles: ["applications"]
+    image: financial-projector:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PROJECT_PATH: src/Financial.Projector.Worker/Financial.Projector.Worker.csproj
+        APP_DLL: Financial.Projector.Worker.dll
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      ConnectionStrings__FinancialWrite: "Host=financial-write-db;Port=5432;Database=financial_write_monitoring;Username=financial_write_app;Password=${FINANCIAL_WRITE_DB_PASSWORD:-};Timeout=5;Command Timeout=30"
+      ConnectionStrings__FinancialRead: "Host=financial-read-db;Port=5432;Database=financial_read_monitoring;Username=financial_read_app;Password=${FINANCIAL_READ_DB_PASSWORD:-};Timeout=5;Command Timeout=30"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_EXPORTER_OTLP_HEADERS: "x-otlp-api-key=${ASPIRE_DASHBOARD_OTLP_API_KEY:-}"
+    extra_hosts:
+      - "host.docker.internal:${MONITORING_HOST_ADDRESS:-host-gateway}"
+    networks: [default, financial-database]
+    restart: unless-stopped
+
   financial-blackbox-exporter:
     profiles: ["monitoring"]
     image: prom/blackbox-exporter:v0.29.1
@@ -103,3 +174,8 @@ volumes:
   financial-read-data:
   financial-prometheus-data:
   financial-alertmanager-data:
+
+networks:
+  financial-database:
+    external: true
+    name: ${FINANCIAL_DATABASE_NETWORK:-financial-db_default}

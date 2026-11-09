@@ -37,6 +37,8 @@ Para diagnóstico local com traces, métricas e logs OpenTelemetry, consulte a o
 
 O perfil opcional `monitoring` adiciona sondagens Prometheus/Blackbox, regras de alerta e a interface local do Alertmanager. As sondagens das APIs precisam ser configuradas por ambiente; as portas TCP do PostgreSQL são sondadas automaticamente. Consulte [`docs/runbook.md`](docs/runbook.md) para subir o perfil sem recriar os bancos e para configurar acesso seguro aos endpoints.
 
+O perfil opcional `applications` constrói as duas APIs e o projetor em containers e usa bancos dedicados para ensaio. O `Dockerfile` publica uma imagem .NET multi-stage não-root. Configure os segredos no `.env` e siga o provisionamento isolado descrito em [`docs/runbook.md`](docs/runbook.md); não publique as APIs de desenvolvimento na rede.
+
 O schema inicial é aplicado no início da API; as migrations ficam em `src/Financial.Infrastructure/Migrations`. O adapter JSON permanece disponível somente para testes e isolamento local. No PowerShell, inicie a API pelo script, que configura valores JWT temporários e a conexão local apenas para desenvolvimento:
 
 No primeiro terminal:
