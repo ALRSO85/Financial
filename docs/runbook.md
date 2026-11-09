@@ -275,6 +275,12 @@ O script também informa backlog e dead letters. Backlog recente é reportado co
 
 Em 09/11/2026, o ensaio no par ativo isolado `financial_write_monitoring`/`financial_read_monitoring` encontrou zero divergências e zero backlog, mas essas bases estavam vazias, portanto o resultado é apenas uma verificação operacional básica. No par sintético antigo `financial_write_instrumented`/`financial_read_instrumented`, o script conferiu 386.591 IDs maduros e não encontrou divergência de saldo, mas detectou dois eventos pendentes há 3.444 segundos e terminou com código `1` por exceder o limite de cinco minutos. Esse par não é usado pelo serviço ativo; o achado mostra que o verificador sinaliza backlog persistente sem classificar a projeção antiga como totalmente consistente.
 
+## Failover do PostgreSQL
+
+O servidor de ensaio não possui standby nem mecanismo de promoção. Se o banco de escrita ficar indisponível, não confirme movimentações; a API de leitura pode continuar exibindo a projeção com seu `dataAsOf`. Não promova manualmente outro banco lógico nem direcione a API para a projeção de leitura como se fosse o ledger autoritativo. Após recuperar/restaurar o primário, verifique migrations, reconciliação do ledger e backlog da outbox antes de liberar gravações.
+
+A topologia proposta para produção e os exercícios necessários estão em [`ADR-0001`](decisions/adr-0001-postgresql-high-availability.md). Só execute promoção quando existir uma standby configurada e o procedimento conseguir cercar o primário antigo; o PostgreSQL fornece replicação e promoção, mas o detector/fencing precisam vir do serviço gerenciado ou do coordenador HA aprovado. Registre RPO observado, tempo de detecção/promoção/reconexão, erros e resultado da reconciliação no ensaio.
+
 ## Troubleshooting
 
 ### Escrita retorna 503 ou fica lenta
@@ -295,4 +301,4 @@ Interrompa novas movimentações da conta afetada conforme procedimento do banco
 
 ## Limitações do exercício
 
-O ambiente de ensaio tem backup lógico local e reconciliação agendados, alertas de execução e verificadores manuais de restore. Os dumps não são cifrados nem copiados para fora do host; não há PITR, replicação ou failover automatizado do PostgreSQL. As regras Prometheus estão provisionadas, mas não existe receiver externo de alertas. Também faltam deploy gradual e evidência multi-host. A reconciliação verifica saldos e cobertura de eventos da projeção; uma reconciliação financeira de negócio com extratos externos e tratamento de diferenças ainda requer regra e processo aprovados.
+O ambiente de ensaio tem backup lógico local e reconciliação agendados, alertas de execução e verificadores manuais de restore. Os parâmetros para backup cifrado externo estão disponíveis, porém vazios; os dumps atuais não são cifrados nem copiados para fora do host. Não há PITR, replicação ou failover automatizado do PostgreSQL. A proposta de HA ainda depende de plataforma/provedor e de drill aprovado conforme [`ADR-0001`](decisions/adr-0001-postgresql-high-availability.md). As regras Prometheus estão provisionadas, mas não existe receiver externo de alertas. Também faltam deploy gradual e evidência multi-host. A reconciliação verifica saldos e cobertura de eventos da projeção; uma reconciliação financeira de negócio com extratos externos e tratamento de diferenças ainda requer regra e processo aprovados.

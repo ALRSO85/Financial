@@ -206,8 +206,9 @@ sequenceDiagram
 | Transação PostgreSQL, bloqueio da conta e outbox | `src/Financial.Infrastructure/PostgresFinancialRepository.cs` |
 | Projeção eventual e consultas independentes | `src/Financial.Infrastructure/PostgresOutboxProjector.cs`, `src/Financial.Infrastructure/PostgresFinancialReadRepository.cs` |
 | JWT, escopos, endpoints, Swagger e health checks | `src/Financial.Api/` |
-| Testes de regras e contrato HTTP | `tests/Financial.Api.Tests/` |
+| Regras, contrato HTTP, concorrência entre conexões/instâncias/processos e falha da escrita | `tests/Financial.Api.Tests/`, especialmente `PostgresFinancialRepositoryTests.cs` |
 | Premissas e metas operacionais | [`docs/requirements-and-decisions.md`](docs/requirements-and-decisions.md) |
+| Proposta de HA e critérios de failover | [`docs/decisions/adr-0001-postgresql-high-availability.md`](docs/decisions/adr-0001-postgresql-high-availability.md) |
 | Operação, recuperação, reconciliação e troubleshooting | [`docs/runbook.md`](docs/runbook.md), `scripts/Reconcile-FinancialProjection.sh` |
 | Decisões e limites | [`docs/architecture.md`](docs/architecture.md) |
 
@@ -225,7 +226,7 @@ sequenceDiagram
 
 ## Limites e evolução para produção
 
-Esta revisão substitui o ledger JSON por PostgreSQL, inclui migrations versionadas e proteção concorrente no banco. O `docker-compose.yml` é um ambiente local com dois bancos individuais; não provisiona replicação, failover, backups externos ou alta disponibilidade. Essas garantias exigem uma plataforma gerenciada, topologia de implantação e exercícios de recuperação. As metas de SLA, carga, latência, RTO e RPO em `requirements-and-decisions.md` são premissas de avaliação, ainda não medidas nem aprovadas pelo negócio.
+Esta revisão substitui o ledger JSON por PostgreSQL, inclui migrations versionadas e proteção concorrente no banco. O `docker-compose.yml` é um ambiente local com dois bancos individuais; não provisiona replicação, failover, backups externos ou alta disponibilidade. A proposta de topologia HA e os critérios para demonstrá-la estão em [`ADR-0001`](docs/decisions/adr-0001-postgresql-high-availability.md), mas dependem de infraestrutura em domínios de falha distintos. As metas de SLA, carga, latência, RTO e RPO em `requirements-and-decisions.md` são premissas de avaliação, ainda não medidas nem aprovadas pelo negócio.
 
 O saldo consolidado aqui significa saldo contábil resultante de lançamentos ordenados por `OccurredAt` (UTC). Requisitos de data-valor, lançamentos retroativos, ordenação total, estornos, limites/regulação e saldo disponível versus contábil precisam ser definidos pelo produto. Para histórico com alta taxa de consulta, snapshots devem ser reconstruíveis e conciliados com o ledger.
 

@@ -54,7 +54,7 @@ Os valores são um cenário de dimensionamento e teste para a revisão técnica.
 - **Persistência de escrita:** PostgreSQL relacional, com transação ACID, migrations, chave única `(AccountId, IdempotencyKey)` e atualização concorrente protegida por lock/versionamento no registro da conta.
 - **Separação de leitura:** API de consulta e banco de projeção próprios. Um projetor independente lê a outbox persistida com a movimentação e atualiza a projeção idempotentemente.
 - **Publicação confiável:** transactional outbox elimina o intervalo entre commit financeiro e publicação do evento. O projetor usa checkpoint/versão e pode repetir eventos com segurança.
-- **Disponibilidade:** implantação independente reduz falhas de processo e deploy compartilhados. Em produção, os bancos de escrita e leitura também precisam de isolamento de falha, backups e topologia de recuperação próprias; dois bancos lógicos no mesmo servidor não são independência de infraestrutura.
+- **Disponibilidade:** implantação independente reduz falhas de processo e deploy compartilhados. Em produção, a meta proposta é banco de escrita com standby síncrono e failover/fencing gerenciados em domínios distintos; o banco de leitura precisa de HA própria e é reconstruível pela outbox. O desenho e os critérios de aceite estão em [`ADR-0001`](decisions/adr-0001-postgresql-high-availability.md). Dois bancos lógicos ou containers no mesmo servidor não são independência de infraestrutura; a ADR não está provisionada nem validada.
 - **JSON:** deixa de ser a persistência operacional da solução revisada. Pode continuar como formato de exportação/fixture de teste, mas não como ledger concorrente.
 - **Sem garantia inventada:** valores de SLA/SLO, volume, latência, RTO e RPO são hipóteses de trabalho até validação da empresa.
 
@@ -75,3 +75,4 @@ Os valores são um cenário de dimensionamento e teste para a revisão técnica.
 - Reprocessar eventos não duplica saldo; evento fora de ordem não regride a projeção.
 - Métricas e health checks mostram indisponibilidade/degradação e atraso do projetor sem expor dados sensíveis.
 - Testes e instruções de operação demonstram persistência, concorrência, falha parcial e restauração. As metas numéricas são medidas em ambiente controlado e identificadas como alvos do exercício.
+- RPO/RTO de produção só podem ser declarados após failover/restore ensaiados em domínios de falha independentes; a configuração isolada não constitui evidência de HA.
