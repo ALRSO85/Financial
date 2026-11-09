@@ -118,7 +118,7 @@ docker compose up -d financial-write-db financial-read-db
 No PowerShell:
 
 ```powershell
-$env:FinancialTests__PostgresConnectionString = "Host=localhost;Port=5432;Database=financial;Username=financial;Password=financial-local-only"
+$env:FinancialTests__PostgresConnectionString = "Host=localhost;Port=5432;Database=financial;Username=financial;Password=financial-local-only;GSS Encryption Mode=Disable"
 dotnet test
 ```
 

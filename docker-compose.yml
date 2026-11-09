@@ -69,7 +69,7 @@ services:
       Jwt__Issuer: financial-sandbox
       Jwt__Audience: financial-sandbox-api
       Jwt__SigningKey: ${FINANCIAL_JWT_SIGNING_KEY:-}
-      ConnectionStrings__FinancialWrite: "Host=financial-write-db;Port=5432;Database=financial_write_monitoring;Username=financial_write_app;Password=${FINANCIAL_WRITE_DB_PASSWORD:-};Timeout=5;Command Timeout=30"
+      ConnectionStrings__FinancialWrite: "Host=financial-write-db;Port=5432;Database=financial_write_monitoring;Username=financial_write_app;Password=${FINANCIAL_WRITE_DB_PASSWORD:-};Timeout=5;Command Timeout=30;GSS Encryption Mode=Disable"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
       OTEL_EXPORTER_OTLP_HEADERS: "x-otlp-api-key=${ASPIRE_DASHBOARD_OTLP_API_KEY:-}"
@@ -95,7 +95,7 @@ services:
       Jwt__Issuer: financial-sandbox
       Jwt__Audience: financial-sandbox-api
       Jwt__SigningKey: ${FINANCIAL_JWT_SIGNING_KEY:-}
-      ConnectionStrings__FinancialRead: "Host=financial-read-db;Port=5432;Database=financial_read_monitoring;Username=financial_read_app;Password=${FINANCIAL_READ_DB_PASSWORD:-};Timeout=5;Command Timeout=30"
+      ConnectionStrings__FinancialRead: "Host=financial-read-db;Port=5432;Database=financial_read_monitoring;Username=financial_read_app;Password=${FINANCIAL_READ_DB_PASSWORD:-};Timeout=5;Command Timeout=30;GSS Encryption Mode=Disable"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
       OTEL_EXPORTER_OTLP_HEADERS: "x-otlp-api-key=${ASPIRE_DASHBOARD_OTLP_API_KEY:-}"
@@ -116,8 +116,8 @@ services:
         APP_DLL: Financial.Projector.Worker.dll
     environment:
       DOTNET_ENVIRONMENT: Development
-      ConnectionStrings__FinancialWrite: "Host=financial-write-db;Port=5432;Database=financial_write_monitoring;Username=financial_write_app;Password=${FINANCIAL_WRITE_DB_PASSWORD:-};Timeout=5;Command Timeout=30"
-      ConnectionStrings__FinancialRead: "Host=financial-read-db;Port=5432;Database=financial_read_monitoring;Username=financial_read_app;Password=${FINANCIAL_READ_DB_PASSWORD:-};Timeout=5;Command Timeout=30"
+      ConnectionStrings__FinancialWrite: "Host=financial-write-db;Port=5432;Database=financial_write_monitoring;Username=financial_write_app;Password=${FINANCIAL_WRITE_DB_PASSWORD:-};Timeout=5;Command Timeout=30;GSS Encryption Mode=Disable"
+      ConnectionStrings__FinancialRead: "Host=financial-read-db;Port=5432;Database=financial_read_monitoring;Username=financial_read_app;Password=${FINANCIAL_READ_DB_PASSWORD:-};Timeout=5;Command Timeout=30;GSS Encryption Mode=Disable"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
       OTEL_EXPORTER_OTLP_HEADERS: "x-otlp-api-key=${ASPIRE_DASHBOARD_OTLP_API_KEY:-}"
@@ -137,8 +137,8 @@ services:
         APP_DLL: Financial.DatabaseMigrator.dll
     environment:
       DOTNET_ENVIRONMENT: Development
-      ConnectionStrings__FinancialWriteMigrator: "Host=financial-write-db;Port=5432;Database=financial_write_monitoring;Username=financial_write_migrator;Password=${FINANCIAL_WRITE_MIGRATOR_DB_PASSWORD:-};Timeout=5;Command Timeout=30"
-      ConnectionStrings__FinancialReadMigrator: "Host=financial-read-db;Port=5432;Database=financial_read_monitoring;Username=financial_read_migrator;Password=${FINANCIAL_READ_MIGRATOR_DB_PASSWORD:-};Timeout=5;Command Timeout=30"
+      ConnectionStrings__FinancialWriteMigrator: "Host=financial-write-db;Port=5432;Database=financial_write_monitoring;Username=financial_write_migrator;Password=${FINANCIAL_WRITE_MIGRATOR_DB_PASSWORD:-};Timeout=5;Command Timeout=30;GSS Encryption Mode=Disable"
+      ConnectionStrings__FinancialReadMigrator: "Host=financial-read-db;Port=5432;Database=financial_read_monitoring;Username=financial_read_migrator;Password=${FINANCIAL_READ_MIGRATOR_DB_PASSWORD:-};Timeout=5;Command Timeout=30;GSS Encryption Mode=Disable"
     command: ["all"]
     networks: [default, financial-database]
 

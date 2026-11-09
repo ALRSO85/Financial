@@ -83,6 +83,7 @@ Os valores são um cenário de dimensionamento e teste para a revisão técnica.
 - JWT será validado por emissor confiável; autorização seguirá o titular da conta e políticas/perfis necessários. A chave de desenvolvimento não é reutilizável fora do ambiente local.
 - Segredos de ambiente real vêm de um secret manager, com rotação; dados financeiros e identificadores pessoais não aparecem em logs.
 - TLS protege tráfego. Criptografia em repouso é responsabilidade do banco/armazenamento gerenciado e das chaves administradas.
+- Conexões do sandbox usam senha e definem `GSS Encryption Mode=Disable` para não iniciar uma negociação Kerberos que o ambiente não provisiona. Isso não substitui TLS: conexões fora de `Development` continuam exigindo `SslMode=VerifyFull`. Se a plataforma aprovada fornecer GSS/Kerberos, a opção poderá ser configurada explicitamente.
 - Auditoria registra quem executou ou consultou uma operação, quando e o resultado, com acesso e retenção controlados.
 - Health checks distinguem liveness de readiness; métricas, logs correlacionáveis e tracing expõem latência, erro, backlog e idade da projeção.
 - Backup só é considerado válido após restauração ensaiada. Runbooks cobrem deploy, rollback, falha de banco, atraso de projeção, fila/outbox, reconciliação e recuperação.

@@ -18,7 +18,7 @@ $connectionVariable = "ConnectionStrings__FinancialWrite"
 $previousConnection = [Environment]::GetEnvironmentVariable($connectionVariable, "Process")
 if ([string]::IsNullOrWhiteSpace($previousConnection)) {
     [Environment]::SetEnvironmentVariable($connectionVariable,
-        "Host=localhost;Port=5432;Database=financial;Username=financial;Password=financial-local-only", "Process")
+        "Host=localhost;Port=5432;Database=financial;Username=financial;Password=financial-local-only;GSS Encryption Mode=Disable", "Process")
 }
 $previousValues = @{}
 

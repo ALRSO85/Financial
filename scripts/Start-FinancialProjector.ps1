@@ -8,8 +8,8 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 
 $variables = [ordered]@{
     DOTNET_ENVIRONMENT = "Development"
-    ConnectionStrings__FinancialWrite = "Host=localhost;Port=5432;Database=financial;Username=financial;Password=financial-local-only"
-    ConnectionStrings__FinancialRead = "Host=localhost;Port=5433;Database=financial_read;Username=financial;Password=financial-local-only"
+    ConnectionStrings__FinancialWrite = "Host=localhost;Port=5432;Database=financial;Username=financial;Password=financial-local-only;GSS Encryption Mode=Disable"
+    ConnectionStrings__FinancialRead = "Host=localhost;Port=5433;Database=financial_read;Username=financial;Password=financial-local-only;GSS Encryption Mode=Disable"
 }
 $previousValues = @{}
 foreach ($name in $variables.Keys) {

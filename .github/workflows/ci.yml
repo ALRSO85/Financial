@@ -35,8 +35,8 @@ jobs:
           --health-timeout 3s
           --health-retries 20
     env:
-      FinancialTests__PostgresConnectionString: Host=localhost;Port=5432;Database=financial;Username=financial;Password=financial
-      FinancialTests__ReadPostgresConnectionString: Host=localhost;Port=5433;Database=financial;Username=financial;Password=financial
+      FinancialTests__PostgresConnectionString: Host=localhost;Port=5432;Database=financial;Username=financial;Password=financial;GSS Encryption Mode=Disable
+      FinancialTests__ReadPostgresConnectionString: Host=localhost;Port=5433;Database=financial;Username=financial;Password=financial;GSS Encryption Mode=Disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
