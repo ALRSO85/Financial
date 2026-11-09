@@ -39,7 +39,7 @@ O perfil opcional `monitoring` adiciona sondagens Prometheus/Blackbox, regras de
 
 O perfil opcional `applications` constrói as duas APIs e o projetor em containers e usa bancos dedicados para ensaio. O `Dockerfile` publica uma imagem .NET multi-stage não-root. Configure os segredos no `.env` e siga o provisionamento isolado descrito em [`docs/runbook.md`](docs/runbook.md); não publique as APIs de desenvolvimento na rede.
 
-O schema inicial é aplicado no início da API; as migrations ficam em `src/Financial.Infrastructure/Migrations`. O adapter JSON permanece disponível somente para testes e isolamento local. No PowerShell, inicie a API pelo script, que lê uma chave JWT aleatória de 256 bits, criada uma vez em uma pasta do usuário fora do repositório e protegida pelas permissões do sistema operacional. O gerador de token e as APIs locais usam a mesma chave; ela é exclusiva para `Development`:
+Em `Development`, a API pode aplicar as migrations do respectivo banco ao iniciar. As migrations versionadas ficam em `src/Financial.Infrastructure/Migrations`; em produção, execute-as como etapa controlada de deploy pelo `Financial.DatabaseMigrator` antes de liberar a nova versão. O adapter JSON permanece disponível somente para testes e isolamento local. No PowerShell, inicie a API pelo script, que lê uma chave JWT aleatória de 256 bits, criada uma vez em uma pasta do usuário fora do repositório e protegida pelas permissões do sistema operacional. O gerador de token e as APIs locais usam a mesma chave; ela é exclusiva para `Development`:
 
 No primeiro terminal:
 
