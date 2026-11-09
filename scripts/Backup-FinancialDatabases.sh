@@ -10,6 +10,7 @@ RETENTION_DAYS=14
 WRITE_CONTAINER="financial-write-db"
 READ_CONTAINER="financial-read-db"
 AGE_RECIPIENT="${FINANCIAL_BACKUP_AGE_RECIPIENT:-}"
+ALLOW_PLAINTEXT="${FINANCIAL_BACKUP_ALLOW_PLAINTEXT:-}"
 REMOTE_TARGET="${FINANCIAL_BACKUP_REMOTE_TARGET:-}"
 RCLONE_CONFIG_PATH="${RCLONE_CONFIG:-}"
 
@@ -25,6 +26,7 @@ load_project_setting() {
 }
 
 AGE_RECIPIENT="$(load_project_setting FINANCIAL_BACKUP_AGE_RECIPIENT)"
+ALLOW_PLAINTEXT="$(load_project_setting FINANCIAL_BACKUP_ALLOW_PLAINTEXT)"
 REMOTE_TARGET="$(load_project_setting FINANCIAL_BACKUP_REMOTE_TARGET)"
 RCLONE_CONFIG_PATH="$(load_project_setting RCLONE_CONFIG)"
 if [[ -n "$RCLONE_CONFIG_PATH" ]]; then
@@ -94,6 +96,17 @@ fi
 if [[ -n "$REMOTE_TARGET" && -z "$AGE_RECIPIENT" ]]; then
   echo "O envio externo exige FINANCIAL_BACKUP_AGE_RECIPIENT; dumps em claro não serão enviados." >&2
   exit 2
+fi
+if [[ "$ALLOW_PLAINTEXT" != "" && "$ALLOW_PLAINTEXT" != "true" && "$ALLOW_PLAINTEXT" != "false" ]]; then
+  echo "FINANCIAL_BACKUP_ALLOW_PLAINTEXT deve ser true ou false." >&2
+  exit 2
+fi
+if [[ -z "$AGE_RECIPIENT" && "$ALLOW_PLAINTEXT" != "true" ]]; then
+  echo "Backup em claro bloqueado. Configure FINANCIAL_BACKUP_AGE_RECIPIENT ou autorize explicitamente o sandbox com FINANCIAL_BACKUP_ALLOW_PLAINTEXT=true." >&2
+  exit 2
+fi
+if [[ -z "$AGE_RECIPIENT" ]]; then
+  echo "AVISO: gravando dumps financeiros sem cifragem; use somente no sandbox isolado." >&2
 fi
 
 required_commands=(docker flock find sha256sum stat awk cut)
