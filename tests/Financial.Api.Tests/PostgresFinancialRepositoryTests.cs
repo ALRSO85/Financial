@@ -271,7 +271,11 @@ public sealed class PostgresFinancialRepositoryTests : IAsyncLifetime
         return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 
-    private static Process StartApiProcess(Uri address, string writeConnectionString, string readConnectionString)
+    private static Process StartApiProcess(
+        Uri address,
+        string writeConnectionString,
+        string readConnectionString,
+        string apiRole = "write")
     {
         var apiAssemblyPath = typeof(global::Program).Assembly.Location;
         var startInfo = new ProcessStartInfo("dotnet")
@@ -285,7 +289,7 @@ public sealed class PostgresFinancialRepositoryTests : IAsyncLifetime
         startInfo.ArgumentList.Add(apiAssemblyPath);
         startInfo.Environment["DOTNET_ENVIRONMENT"] = "Development";
         startInfo.Environment["ASPNETCORE_URLS"] = address.ToString();
-        startInfo.Environment["Financial__ApiRole"] = "write";
+        startInfo.Environment["Financial__ApiRole"] = apiRole;
         startInfo.Environment["Financial__StorageProvider"] = "postgres";
         startInfo.Environment["ConnectionStrings__FinancialWrite"] = writeConnectionString;
         startInfo.Environment["ConnectionStrings__FinancialRead"] = readConnectionString;
@@ -396,57 +400,45 @@ public sealed class PostgresFinancialRepositoryTests : IAsyncLifetime
     }
 
     [PostgresFact]
-    public async Task Read_api_serves_consolidated_balance_after_write_api_stops()
+    public async Task Read_api_stays_available_during_write_process_outage_and_catches_up_after_recovery()
     {
-        var settings = new Dictionary<string, string?>
-        {
-            ["Financial__ApiRole"] = "write",
-            ["Financial__StorageProvider"] = "postgres",
-            ["ConnectionStrings__FinancialWrite"] = _writeTestConnectionString,
-            ["ConnectionStrings__FinancialRead"] = _readTestConnectionString,
-            ["Jwt__Issuer"] = "financial-availability-test",
-            ["Jwt__Audience"] = "financial-api-test",
-            ["Jwt__SigningKey"] = "availability-test-signing-key-with-at-least-32-bytes"
-        };
-        var previousSettings = settings.Keys.ToDictionary(key => key, Environment.GetEnvironmentVariable);
+        var writeUri = new Uri($"http://127.0.0.1:{GetAvailablePort()}");
+        var readUri = new Uri($"http://127.0.0.1:{GetAvailablePort()}");
+        var recoveredWriteUri = new Uri($"http://127.0.0.1:{GetAvailablePort()}");
+        Process? writeProcess = null;
+        Process? readProcess = null;
+        Process? recoveredWriteProcess = null;
 
         try
         {
-            foreach (var (key, value) in settings)
-                Environment.SetEnvironmentVariable(key, value);
+            writeProcess = StartApiProcess(writeUri, _writeTestConnectionString, _readTestConnectionString);
+            using var writeClient = await WaitForApiAsync(writeProcess, writeUri);
+            writeClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateToken("financial.write"));
 
-            Guid accountId;
-            using (var writeApi = new WebApplicationFactory<global::Program>().WithWebHostBuilder(builder =>
-                       builder.UseEnvironment("Development")))
-            using (var writeClient = writeApi.CreateClient())
-            {
-                writeClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateToken("financial.write"));
-                using var createAccountResponse = await writeClient.PostAsync("/accounts", content: null);
-                Assert.Equal(HttpStatusCode.Created, createAccountResponse.StatusCode);
-                var account = await JsonSerializer.DeserializeAsync<AccountResponse>(
-                    await createAccountResponse.Content.ReadAsStreamAsync(), new JsonSerializerOptions(JsonSerializerDefaults.Web));
-                Assert.NotNull(account);
-                accountId = account.Id;
-
-                using var postResponse = await writeClient.PostAsJsonAsync(
-                    $"/accounts/{accountId}/transactions",
-                    new PostTransactionRequest("credit", 1_250, "availability-credit", "seed"));
-                Assert.Equal(HttpStatusCode.Created, postResponse.StatusCode);
-            }
+            using var createAccountResponse = await writeClient.PostAsync("/accounts", content: null);
+            Assert.Equal(HttpStatusCode.Created, createAccountResponse.StatusCode);
+            var account = await JsonSerializer.DeserializeAsync<AccountResponse>(
+                await createAccountResponse.Content.ReadAsStreamAsync(), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Assert.NotNull(account);
+            using var initialCreditResponse = await writeClient.PostAsJsonAsync(
+                $"/accounts/{account.Id}/transactions",
+                new PostTransactionRequest("credit", 1_250, "availability-credit", "seed"));
+            Assert.Equal(HttpStatusCode.Created, initialCreditResponse.StatusCode);
 
             var projector = new PostgresOutboxProjector(_dataSource, _readDataSource);
             Assert.Equal(2, await projector.ProjectBatchAsync(default));
 
-            settings["Financial__ApiRole"] = "read";
-            settings["ConnectionStrings__FinancialWrite"] =
-                "Host=127.0.0.1;Port=1;Database=unavailable;Username=unavailable;Password=unavailable;Timeout=1";
-            foreach (var (key, value) in settings)
-                Environment.SetEnvironmentVariable(key, value);
-
-            using var readApi = new WebApplicationFactory<global::Program>().WithWebHostBuilder(builder =>
-                builder.UseEnvironment("Development"));
-            using var readClient = readApi.CreateClient();
+            readProcess = StartApiProcess(
+                readUri,
+                "Host=127.0.0.1;Port=1;Database=unavailable;Username=unavailable;Password=unavailable;Timeout=1",
+                _readTestConnectionString,
+                apiRole: "read");
+            using var readClient = await WaitForApiAsync(readProcess, readUri);
             readClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateToken("financial.read"));
+
+            await StopApiProcessAsync(writeProcess);
+            writeProcess = null;
+
             using var response = await readClient.GetAsync("/customers/me/balance");
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -456,11 +448,40 @@ public sealed class PostgresFinancialRepositoryTests : IAsyncLifetime
             Assert.Equal(1_250, balance.BalanceInCents);
             Assert.Equal(1, balance.AccountCount);
             Assert.NotNull(balance.DataAsOf);
+
+            recoveredWriteProcess = StartApiProcess(
+                recoveredWriteUri, _writeTestConnectionString, _readTestConnectionString);
+            using var recoveredWriteClient = await WaitForApiAsync(recoveredWriteProcess, recoveredWriteUri);
+            recoveredWriteClient.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", CreateToken("financial.write"));
+            using var recoveryCreditResponse = await recoveredWriteClient.PostAsJsonAsync(
+                $"/accounts/{account.Id}/transactions",
+                new PostTransactionRequest("credit", 500, "availability-recovery-credit", "after recovery"));
+            Assert.Equal(HttpStatusCode.Created, recoveryCreditResponse.StatusCode);
+
+            using var staleResponse = await readClient.GetAsync("/customers/me/balance");
+            Assert.Equal(HttpStatusCode.OK, staleResponse.StatusCode);
+            var staleBalance = await JsonSerializer.DeserializeAsync<CustomerBalanceResponse>(
+                await staleResponse.Content.ReadAsStreamAsync(), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Assert.NotNull(staleBalance);
+            Assert.Equal(1_250, staleBalance.BalanceInCents);
+
+            Assert.Equal(1, await projector.ProjectBatchAsync(default));
+            using var recoveredResponse = await readClient.GetAsync("/customers/me/balance");
+            Assert.Equal(HttpStatusCode.OK, recoveredResponse.StatusCode);
+            var recoveredBalance = await JsonSerializer.DeserializeAsync<CustomerBalanceResponse>(
+                await recoveredResponse.Content.ReadAsStreamAsync(), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Assert.NotNull(recoveredBalance);
+            Assert.Equal(1_750, recoveredBalance.BalanceInCents);
         }
         finally
         {
-            foreach (var (key, value) in previousSettings)
-                Environment.SetEnvironmentVariable(key, value);
+            if (writeProcess is not null)
+                await StopApiProcessAsync(writeProcess);
+            if (readProcess is not null)
+                await StopApiProcessAsync(readProcess);
+            if (recoveredWriteProcess is not null)
+                await StopApiProcessAsync(recoveredWriteProcess);
         }
     }
 
