@@ -8,3 +8,4 @@
 .vs/
 .idea/
 .env
+/monitoring/metrics/financial_backup.prom

@@ -134,6 +134,18 @@ services:
       - "host.docker.internal:${MONITORING_HOST_ADDRESS:-host-gateway}"
     restart: unless-stopped
 
+  financial-backup-metrics:
+    profiles: ["monitoring"]
+    image: prom/node-exporter:v1.12.1
+    command:
+      - "--collector.disable-defaults"
+      - "--collector.textfile"
+      - "--collector.textfile.directory=/var/lib/node_exporter/textfile_collector"
+    volumes:
+      - ./monitoring/metrics:/var/lib/node_exporter/textfile_collector:ro
+    expose: ["9100"]
+    restart: unless-stopped
+
   financial-prometheus:
     profiles: ["monitoring"]
     image: prom/prometheus:v3.13.5
@@ -151,6 +163,7 @@ services:
       - financial-prometheus-data:/prometheus
     depends_on:
       - financial-blackbox-exporter
+      - financial-backup-metrics
       - financial-alertmanager
     extra_hosts:
       - "host.docker.internal:${MONITORING_HOST_ADDRESS:-host-gateway}"

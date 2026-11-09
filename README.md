@@ -132,6 +132,8 @@ Para ensaios de leitura, `scripts/Seed-FinancialReadLoadTest.ps1` prepara fixtur
 
 O script `scripts/Test-FinancialBackupRestore.ps1` valida backup e restore lógico no servidor Docker/PostgreSQL de ensaio (`192.168.88.200` por padrão), usando o banco sintético dedicado e restaurando em uma base nova. Consulte [`docs/runbook.md`](docs/runbook.md) antes de alterar os parâmetros; o ensaio não configura backup agendado nem recuperação de desastre.
 
+Para o ambiente de ensaio, `scripts/Backup-FinancialDatabases.sh` gera backups completos agendados e atualiza métricas para alertas de falha/atraso. Os arquivos permanecem no mesmo host e não são cifrados; a rotina não substitui backup externo/PITR. Consulte as limitações e instalação do cron em [`docs/runbook.md`](docs/runbook.md).
+
 ## Organização do código
 
 ```text

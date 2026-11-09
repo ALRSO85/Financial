@@ -84,6 +84,18 @@ Não há pipeline de deploy nesta entrega; o ambiente e a estratégia de rollout
 
 Em produção, use backup gerenciado/PITR com criptografia, controle de acesso, retenção aprovada e cópia fora da zona de falha. Proteja separadamente os bancos de escrita e leitura. A projeção é reconstruível a partir da outbox retida; o ledger de escrita é a fonte autoritativa.
 
+### Backups lógicos agendados do ambiente de ensaio
+
+No servidor, `scripts/Backup-FinancialDatabases.sh` faz dumps custom-format de cada banco `financial*` nos containers PostgreSQL de escrita e leitura, exceto bases temporárias `financial_restore_validation_*`. Cada arquivo é validado com `pg_restore --list` e recebe SHA-256; só depois todos os arquivos são publicados juntos em uma pasta `daily-*`. O diretório `/home/alexandre/financial-backups` usa modo `700`, as pastas também `700`, e os dumps/manifestos usam `600`. A retenção local é de 14 dias. Configure o job diário às 03:00 no fuso do servidor com:
+
+```bash
+bash scripts/Install-FinancialBackupCron.sh
+```
+
+Execute `bash scripts/Backup-FinancialDatabases.sh` uma vez para validar agora, sem aguardar a janela agendada. O perfil `monitoring` lê `monitoring/metrics/financial_backup.prom` pelo exporter de texto. As regras em `/alerts` sinalizam ausência de sucesso, falha da última execução ou atraso superior a 30 horas. O job mantém no Prometheus o último timestamp de sucesso mesmo se uma tentativa posterior falhar.
+
+Esta rotina é um backup lógico completo local, não PITR: pode perder até um dia de alterações e depende do mesmo host e do mesmo domínio de falha. Os dumps ainda não são cifrados e não são enviados para fora do host; por isso, a rotina não atende os objetivos provisórios de RPO 0, criptografia em repouso ou recuperação após perda do servidor. Mantenha o serviço somente no ambiente de ensaio até definir e validar uma chave de cifragem e um destino externo.
+
 Para uma cópia manual do banco local, o cliente `pg_dump` pode gravar o dump dentro do container e depois copiá-lo para fora:
 
 ```powershell

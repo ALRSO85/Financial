@@ -63,3 +63,39 @@ groups:
         annotations:
           summary: Latência da API acima da premissa
           description: A sondagem HTTP ultrapassou 500 ms continuamente. Esse valor é premissa de exercício, não SLO aprovado.
+
+      - alert: FinancialBackupNeverSucceeded
+        expr: absent(financial_backup_last_success_timestamp_seconds)
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Ainda não há backup válido registrado
+          description: Execute o backup manual ou aguarde a primeira janela agendada; o timestamp de sucesso está ausente.
+
+      - alert: FinancialBackupMetricsUnavailable
+        expr: up{job="financial-backup"} == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Métricas de backup indisponíveis
+          description: Prometheus não está coletando o exporter de métricas do backup.
+
+      - alert: FinancialBackupLastRunFailed
+        expr: financial_backup_last_run_success == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Última execução do backup falhou
+          description: Verifique o log do job, espaço em disco e conectividade PostgreSQL.
+
+      - alert: FinancialBackupOverdue
+        expr: time() - financial_backup_last_success_timestamp_seconds > 108000
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Backup financeiro atrasado
+          description: Não há backup lógico concluído nas últimas 30 horas.
