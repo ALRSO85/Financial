@@ -9,13 +9,28 @@ METRICS_FILE="$METRICS_DIR/financial_backup.prom"
 RETENTION_DAYS=14
 WRITE_CONTAINER="financial-write-db"
 READ_CONTAINER="financial-read-db"
+AGE_RECIPIENT="${FINANCIAL_BACKUP_AGE_RECIPIENT:-}"
+REMOTE_TARGET="${FINANCIAL_BACKUP_REMOTE_TARGET:-}"
+RCLONE_CONFIG_PATH="${RCLONE_CONFIG:-}"
 
-for command in docker flock find sha256sum stat; do
-  command -v "$command" >/dev/null 2>&1 || {
-    echo "Comando necessário não encontrado: $command" >&2
-    exit 1
-  }
-done
+load_project_setting() {
+  local setting_name="$1"
+  local current_value="${!setting_name:-}"
+  if [[ -n "$current_value" ]]; then
+    printf '%s' "$current_value"
+    return
+  fi
+  if [[ -f "$PROJECT_DIR/.env" ]]; then
+    awk -F= -v key="$setting_name" '$1 == key { sub(/^[^=]*=/, ""); sub(/\r$/, ""); print; exit }' "$PROJECT_DIR/.env"
+  fi
+}
+
+AGE_RECIPIENT="$(load_project_setting FINANCIAL_BACKUP_AGE_RECIPIENT)"
+REMOTE_TARGET="$(load_project_setting FINANCIAL_BACKUP_REMOTE_TARGET)"
+RCLONE_CONFIG_PATH="$(load_project_setting RCLONE_CONFIG)"
+if [[ -n "$RCLONE_CONFIG_PATH" ]]; then
+  export RCLONE_CONFIG="$RCLONE_CONFIG_PATH"
+fi
 
 mkdir -p "$BACKUP_DIR" "$METRICS_DIR"
 chmod 700 "$BACKUP_DIR"
@@ -30,6 +45,10 @@ if [[ -f "$METRICS_FILE" ]]; then
   last_success="$(awk '$1 == "financial_backup_last_success_timestamp_seconds" {print $2; exit}' "$METRICS_FILE")"
 fi
 database_count=0
+encryption_enabled=0
+remote_copy_enabled=0
+if [[ -n "$AGE_RECIPIENT" ]]; then encryption_enabled=1; fi
+if [[ -n "$REMOTE_TARGET" ]]; then remote_copy_enabled=1; fi
 temporary_directory=""
 
 write_metrics() {
@@ -41,6 +60,8 @@ write_metrics() {
     printf 'financial_backup_last_run_success %s\n' "$success"
     printf 'financial_backup_last_run_timestamp_seconds %s\n' "$(date +%s)"
     printf 'financial_backup_database_count %s\n' "$database_count"
+    printf 'financial_backup_encryption_enabled %s\n' "$encryption_enabled"
+    printf 'financial_backup_remote_copy_enabled %s\n' "$remote_copy_enabled"
     if [[ -n "$timestamp" ]]; then
       printf 'financial_backup_last_success_timestamp_seconds %s\n' "$timestamp"
     fi
@@ -63,6 +84,33 @@ cleanup() {
 }
 trap cleanup EXIT
 
+if [[ -n "$AGE_RECIPIENT" && ! "$AGE_RECIPIENT" =~ ^age1[a-z0-9]+$ ]]; then
+  echo "FINANCIAL_BACKUP_AGE_RECIPIENT deve conter uma chave pública age válida." >&2
+  exit 2
+fi
+if [[ -n "$REMOTE_TARGET" && ! "$REMOTE_TARGET" =~ ^[A-Za-z0-9._-]+:[A-Za-z0-9._/-]*$ ]]; then
+  echo "FINANCIAL_BACKUP_REMOTE_TARGET deve apontar para um remote rclone nomeado, como destino:financeiro/backups." >&2
+  exit 2
+fi
+if [[ -n "$REMOTE_TARGET" && -z "$AGE_RECIPIENT" ]]; then
+  echo "O envio externo exige FINANCIAL_BACKUP_AGE_RECIPIENT; dumps em claro não serão enviados." >&2
+  exit 2
+fi
+
+required_commands=(docker flock find sha256sum stat awk cut)
+if [[ -n "$AGE_RECIPIENT" ]]; then
+  required_commands+=(age)
+fi
+if [[ -n "$REMOTE_TARGET" ]]; then
+  required_commands+=(rclone)
+fi
+for command in "${required_commands[@]}"; do
+  command -v "$command" >/dev/null 2>&1 || {
+    echo "Comando necessário não encontrado: $command" >&2
+    exit 1
+  }
+done
+
 for container in "$WRITE_CONTAINER" "$READ_CONTAINER"; do
   if [[ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" != "true" ]]; then
     echo "Container PostgreSQL indisponível: $container" >&2
@@ -81,6 +129,16 @@ manifest="$temporary_directory/MANIFEST.txt"
   printf 'write_container=%s\n' "$WRITE_CONTAINER"
   printf 'read_container=%s\n' "$READ_CONTAINER"
   printf 'retention_days=%s\n' "$RETENTION_DAYS"
+  if [[ -n "$AGE_RECIPIENT" ]]; then
+    printf 'encryption=age\n'
+  else
+    printf 'encryption=none\n'
+  fi
+  if [[ -n "$REMOTE_TARGET" ]]; then
+    printf 'remote_copy=enabled\n'
+  else
+    printf 'remote_copy=disabled\n'
+  fi
 } > "$manifest"
 
 for container in "$WRITE_CONTAINER" "$READ_CONTAINER"; do
@@ -97,15 +155,28 @@ for container in "$WRITE_CONTAINER" "$READ_CONTAINER"; do
       exit 1
     fi
     dump_file="$temporary_directory/${container}_${database}.dump"
-    docker exec "$container" pg_dump -U financial --format=custom --no-owner --no-acl --dbname="$database" > "$dump_file"
-    if [[ ! -s "$dump_file" ]]; then
-      echo "Dump vazio: $container/$database" >&2
+    artifact_file="$dump_file"
+    artifact_name="${container}/${database}"
+    if [[ -n "$AGE_RECIPIENT" ]]; then
+      artifact_file="${dump_file}.age"
+      docker exec "$container" pg_dump -U financial --format=custom --no-owner --no-acl --dbname="$database" |
+        age --recipient "$AGE_RECIPIENT" --output "$artifact_file"
+      artifact_name="${artifact_name}.age"
+    else
+      docker exec "$container" pg_dump -U financial --format=custom --no-owner --no-acl --dbname="$database" > "$dump_file"
+      if [[ ! -s "$dump_file" ]]; then
+        echo "Dump vazio: $container/$database" >&2
+        exit 1
+      fi
+      docker exec -i "$container" pg_restore --list < "$dump_file" >/dev/null
+    fi
+    if [[ ! -s "$artifact_file" ]]; then
+      echo "Arquivo de backup vazio: $artifact_file" >&2
       exit 1
     fi
-    docker exec -i "$container" pg_restore --list < "$dump_file" >/dev/null
-    chmod 600 "$dump_file"
-    printf '%s/%s bytes=%s sha256=' "$container" "$database" "$(stat -c '%s' "$dump_file")" >> "$manifest"
-    sha256sum "$dump_file" | cut -d ' ' -f 1 >> "$manifest"
+    chmod 600 "$artifact_file"
+    printf '%s bytes=%s sha256=' "$artifact_name" "$(stat -c '%s' "$artifact_file")" >> "$manifest"
+    sha256sum "$artifact_file" | cut -d ' ' -f 1 >> "$manifest"
     database_count=$((database_count + 1))
   done
 done
@@ -119,6 +190,13 @@ fi
 mv -- "$temporary_directory" "$final_directory"
 temporary_directory=""
 chmod 700 "$final_directory"
+
+if [[ -n "$REMOTE_TARGET" ]]; then
+  remote_backup_directory="${REMOTE_TARGET%/}/daily-$backup_id"
+  rclone copy --checksum --transfers 4 "$final_directory" "$remote_backup_directory"
+  rclone check --download --one-way "$final_directory" "$remote_backup_directory"
+  echo "Cópia externa cifrada verificada: $remote_backup_directory."
+fi
 
 find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'daily-*' -mtime "+$RETENTION_DAYS" -exec rm -rf -- {} +
 
