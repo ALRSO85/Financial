@@ -66,6 +66,8 @@ As APIs não publicam portas no host; suas portas 8080 ficam acessíveis apenas 
 
 O primeiro deploy do sandbox, em 09/11/2026, ocorreu antes da separação dos papéis; naquela versão, os usuários `*_app` eram donos dos bancos. O código atual não altera os papéis de containers já existentes. Para migrar esse ambiente, faça backup e valide a restauração; atualize as imagens das APIs com migrations no startup desativadas; pare APIs e projetor; execute `scripts/Harden-FinancialSandboxRoles.sh .env`; aplique migrations com o serviço `financial-database-migrator`; e então reinicie os serviços. A transição preserva as senhas dos papéis de aplicação e configura credenciais novas para migration. O script valida propriedade do banco, privilégios DDL e transferência de propriedade. Não execute a transição sem backup e janela de manutenção.
 
+Em 09/11/2026, o script de hardening foi ensaiado em dois containers PostgreSQL 17 descartáveis, com bancos, papéis e linhas sintéticas. O teste reproduziu chaves de migration vazias em arquivo `.env` CRLF; a primeira execução revelou que o script acrescentava um valor sem substituir a linha vazia. O script foi corrigido para substituir entradas vazias, retirar `CR` ao ler valores e rejeitar chaves duplicadas. Na repetição, os dois bancos passaram a pertencer aos papéis migrator; os papéis runtime mantiveram `INSERT`/`UPDATE`, não puderam executar `DELETE` nem DDL, e os papéis migrator puderam criar objetos. Containers e arquivos descartáveis foram removidos. A migração do sandbox ativo não foi executada; ele continua usando os papéis de aplicação como proprietários e ainda exige a janela descrita acima.
+
 Com o código atualizado no servidor, a sequência de migração do sandbox é:
 
 ```bash

@@ -16,17 +16,27 @@ fi
 chmod 600 "$ENV_FILE"
 
 read_env_value() {
-  sed -n "s/^${1}=//p" "$ENV_FILE" | head -n 1
+  sed -n "s/^${1}=//p" "$ENV_FILE" | head -n 1 | tr -d '\r'
 }
 
 ensure_secret() {
   local key="$1"
   local current
+  local occurrences
+  local generated
   current="$(read_env_value "$key")"
-  if [[ -z "$current" ]]; then
-    printf '%s=%s\n' "$key" "$(openssl rand -hex 32)" >> "$ENV_FILE"
-  elif [[ "$current" == replace-with-* ]]; then
-    sed -i "s/^${key}=.*/${key}=$(openssl rand -hex 32)/" "$ENV_FILE"
+  occurrences="$(grep -c "^${key}=" "$ENV_FILE" || true)"
+  if (( occurrences > 1 )); then
+    echo "A configuração $key aparece mais de uma vez em $ENV_FILE." >&2
+    exit 1
+  fi
+  if [[ -z "$current" || "$current" == replace-with-* ]]; then
+    generated="$(openssl rand -hex 32)"
+    if (( occurrences == 0 )); then
+      printf '%s=%s\n' "$key" "$generated" >> "$ENV_FILE"
+    else
+      sed -i "s/^${key}=.*/${key}=${generated}/" "$ENV_FILE"
+    fi
   fi
 }
 
@@ -45,6 +55,13 @@ FINANCIAL_WRITE_DB_PASSWORD="$(read_env_value FINANCIAL_WRITE_DB_PASSWORD)"
 FINANCIAL_READ_DB_PASSWORD="$(read_env_value FINANCIAL_READ_DB_PASSWORD)"
 FINANCIAL_WRITE_MIGRATOR_DB_PASSWORD="$(read_env_value FINANCIAL_WRITE_MIGRATOR_DB_PASSWORD)"
 FINANCIAL_READ_MIGRATOR_DB_PASSWORD="$(read_env_value FINANCIAL_READ_MIGRATOR_DB_PASSWORD)"
+for key in FINANCIAL_WRITE_DB_PASSWORD FINANCIAL_READ_DB_PASSWORD FINANCIAL_WRITE_MIGRATOR_DB_PASSWORD FINANCIAL_READ_MIGRATOR_DB_PASSWORD; do
+  occurrences="$(grep -c "^${key}=" "$ENV_FILE" || true)"
+  if [[ "$occurrences" != "1" ]]; then
+    echo "A configuração $key deve aparecer exatamente uma vez em $ENV_FILE." >&2
+    exit 1
+  fi
+done
 if [[ ! "$FINANCIAL_WRITE_DB_PASSWORD" =~ ^[a-f0-9]{64}$ || ! "$FINANCIAL_READ_DB_PASSWORD" =~ ^[a-f0-9]{64}$ || ! "$FINANCIAL_WRITE_MIGRATOR_DB_PASSWORD" =~ ^[a-f0-9]{64}$ || ! "$FINANCIAL_READ_MIGRATOR_DB_PASSWORD" =~ ^[a-f0-9]{64}$ ]]; then
   echo "Credenciais de runtime/migration ausentes ou inválidas em $ENV_FILE." >&2
   exit 1
