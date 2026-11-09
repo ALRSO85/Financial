@@ -76,7 +76,7 @@ O banco de leitura ainda depende de estar disponível para responder consultas; 
 - Logs são JSON estruturados com correlação. OpenTelemetry coleta instrumentação ASP.NET/HTTP, traces do caso de uso e métricas de transações e projeção. Configure `OTEL_EXPORTER_OTLP_ENDPOINT` e um backend para armazenar, consultar e alertar sobre os sinais.
 - O Compose oferece o perfil opcional `observability` com Aspire Dashboard standalone para inspecionar traces, métricas e logs em desenvolvimento. A ingestão OTLP e a API de leitura do dashboard exigem chaves separadas; as portas ficam em loopback por padrão. O dashboard não substitui retenção, alertas ou um backend de produção.
 - Métricas próprias incluem lançamentos aceitos, repetições idempotentes, eventos projetados, duração de lote, eventos pendentes, dead letters e idade do backlog.
-- O script [`Reconcile-FinancialProjection.sh`](../scripts/Reconcile-FinancialProjection.sh) verifica saldos internos, cobertura de eventos maduros, backlog e dead letters entre escrita e projeção. A execução é operacional/manual, não substitui reconciliação de negócio ou comparação com extratos externos.
+- O script [`Reconcile-FinancialProjection.sh`](../scripts/Reconcile-FinancialProjection.sh) verifica saldos internos, cobertura de eventos maduros, backlog e dead letters entre escrita e projeção. Ele pode ser agendado e expõe métricas ao Prometheus; não substitui reconciliação de negócio ou comparação com extratos externos.
 - Procedimentos de deploy, backup/restore, rollback e troubleshooting estão em [`runbook.md`](runbook.md). O backup local do exercício não é recuperação de desastre.
 
 ## Limites restantes

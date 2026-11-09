@@ -99,3 +99,30 @@ groups:
         annotations:
           summary: Backup financeiro atrasado
           description: Não há backup lógico concluído nas últimas 30 horas.
+
+      - alert: FinancialReconciliationNeverSucceeded
+        expr: absent(financial_reconciliation_last_success_timestamp_seconds)
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Reconciliação financeira ainda não executada com sucesso
+          description: Instale o cron ou execute o verificador; não há uma execução bem-sucedida registrada.
+
+      - alert: FinancialReconciliationLastRunFailed
+        expr: financial_reconciliation_last_run_success == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Verificação de reconciliação falhou
+          description: Consulte o log do cron e as métricas de divergência, backlog e dead letters.
+
+      - alert: FinancialReconciliationOverdue
+        expr: time() - financial_reconciliation_last_run_timestamp_seconds > 600
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Reconciliação financeira atrasada
+          description: Nenhuma execução do verificador foi registrada nos últimos 10 minutos.

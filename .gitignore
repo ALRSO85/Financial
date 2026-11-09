@@ -9,3 +9,4 @@
 .idea/
 .env
 /monitoring/metrics/financial_backup.prom
+/monitoring/metrics/financial_reconciliation.prom
