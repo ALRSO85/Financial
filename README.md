@@ -208,7 +208,7 @@ sequenceDiagram
 | JWT, escopos, endpoints, Swagger e health checks | `src/Financial.Api/` |
 | Testes de regras e contrato HTTP | `tests/Financial.Api.Tests/` |
 | Premissas e metas operacionais | [`docs/requirements-and-decisions.md`](docs/requirements-and-decisions.md) |
-| Operação, recuperação e troubleshooting | [`docs/runbook.md`](docs/runbook.md) |
+| Operação, recuperação, reconciliação e troubleshooting | [`docs/runbook.md`](docs/runbook.md), `scripts/Reconcile-FinancialProjection.sh` |
 | Decisões e limites | [`docs/architecture.md`](docs/architecture.md) |
 
 ## Decisões de arquitetura

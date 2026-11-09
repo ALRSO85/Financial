@@ -249,6 +249,14 @@ Em 08/11/2026, foi criado o banco isolado `financial_write_loadtest` e a API de 
 
 O banco foi exportado com `pg_dump` e restaurado em uma base descartável no mesmo container. Contagens, constraints e reconciliação de saldo foram iguais entre origem e restauração. A base de restauração e o dump temporário foram removidos; `financial_write_loadtest` permanece para ensaios futuros, e a API temporária foi encerrada. Este ensaio valida restore lógico de um ledger sintético não vazio; não mede duração de RTO, PITR, cópia fora do host nem recuperação de infraestrutura independente.
 
+## Reconciliação periódica do ledger e da projeção
+
+Execute `bash scripts/Reconcile-FinancialProjection.sh` no host Docker. Por padrão, o script usa `financial` e `financial_read`; defina `FINANCIAL_WRITE_DATABASE` e `FINANCIAL_READ_DATABASE` para apontar a outro par. Ele confere se o saldo de cada conta é igual à soma dos lançamentos em cada banco e compara os IDs dos eventos já processados/projetados há pelo menos cinco minutos. Os conjuntos são capturados duas vezes; se mudarem durante a verificação, o resultado é inconclusivo e o script pede nova tentativa. Eventos mais novos que a janela de estabilização ficam fora da comparação para respeitar a consistência eventual.
+
+O script também informa backlog e dead letters. Backlog recente é reportado como atraso esperado da projeção; backlog mais velho que cinco minutos, qualquer dead letter, divergência de saldo ou diferença entre conjuntos maduros retorna erro. A janela e os limites podem ser configurados por `FINANCIAL_RECONCILIATION_SETTLE_SECONDS`, `FINANCIAL_RECONCILIATION_MAX_PENDING_AGE_SECONDS`, `FINANCIAL_RECONCILIATION_RETRIES` e `FINANCIAL_RECONCILIATION_RETRY_DELAY_SECONDS`. Execute com acesso somente leitura aos dados de negócio sempre que possível; o script não altera o ledger ou a projeção.
+
+Em 09/11/2026, o ensaio no par ativo isolado `financial_write_monitoring`/`financial_read_monitoring` encontrou zero divergências e zero backlog, mas essas bases estavam vazias, portanto o resultado é apenas uma verificação operacional básica. No par sintético antigo `financial_write_instrumented`/`financial_read_instrumented`, o script conferiu 386.591 IDs maduros e não encontrou divergência de saldo, mas detectou dois eventos pendentes há 3.444 segundos e terminou com código `1` por exceder o limite de cinco minutos. Esse par não é usado pelo serviço ativo; o achado mostra que o verificador sinaliza backlog persistente sem classificar a projeção antiga como totalmente consistente.
+
 ## Troubleshooting
 
 ### Escrita retorna 503 ou fica lenta
@@ -269,4 +277,4 @@ Interrompa novas movimentações da conta afetada conforme procedimento do banco
 
 ## Limitações do exercício
 
-Não existe automação de backup, restore, failover de PostgreSQL, alertas provisionados, deploy gradual ou reconciliação de negócio. O runbook define o procedimento esperado, mas a equipe precisa executá-lo e guardar evidências antes de uma operação real.
+O ambiente de ensaio tem backup lógico local agendado, alerta de execução e verificadores manuais de restore e reconciliação. Os dumps não são cifrados nem copiados para fora do host; não há PITR, replicação ou failover automatizado do PostgreSQL. As regras Prometheus estão provisionadas, mas não existe receiver externo de alertas. Também faltam deploy gradual e evidência multi-host. A reconciliação verifica saldos e cobertura de eventos da projeção; uma reconciliação financeira de negócio com extratos externos e tratamento de diferenças ainda requer regra e processo aprovados.
