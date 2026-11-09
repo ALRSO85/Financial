@@ -203,9 +203,10 @@ static bool HasScope(ClaimsPrincipal principal, string requiredScope) => princip
     .Contains(requiredScope, StringComparer.Ordinal);
 
 var app = builder.Build();
-if (app.Environment.IsDevelopment() && app.Services.GetService<PostgresFinancialDatabaseInitializer>() is { } databaseInitializer)
+var applyMigrationsOnStartup = app.Configuration.GetValue("Financial:ApplyMigrationsOnStartup", true);
+if (app.Environment.IsDevelopment() && applyMigrationsOnStartup && app.Services.GetService<PostgresFinancialDatabaseInitializer>() is { } databaseInitializer)
     await databaseInitializer.InitializeAsync(app.Lifetime.ApplicationStopping);
-if (app.Environment.IsDevelopment() && app.Services.GetService<PostgresFinancialReadDatabaseInitializer>() is { } readDatabaseInitializer)
+if (app.Environment.IsDevelopment() && applyMigrationsOnStartup && app.Services.GetService<PostgresFinancialReadDatabaseInitializer>() is { } readDatabaseInitializer)
     await readDatabaseInitializer.InitializeAsync(app.Lifetime.ApplicationStopping);
 if (app.Environment.IsDevelopment())
 {

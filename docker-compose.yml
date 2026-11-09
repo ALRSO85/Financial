@@ -65,6 +65,7 @@ services:
     environment:
       DOTNET_ENVIRONMENT: Development
       Financial__ApiRole: write
+      Financial__ApplyMigrationsOnStartup: "false"
       Jwt__Issuer: financial-sandbox
       Jwt__Audience: financial-sandbox-api
       Jwt__SigningKey: ${FINANCIAL_JWT_SIGNING_KEY:-}
@@ -90,6 +91,7 @@ services:
     environment:
       DOTNET_ENVIRONMENT: Development
       Financial__ApiRole: read
+      Financial__ApplyMigrationsOnStartup: "false"
       Jwt__Issuer: financial-sandbox
       Jwt__Audience: financial-sandbox-api
       Jwt__SigningKey: ${FINANCIAL_JWT_SIGNING_KEY:-}
@@ -123,6 +125,22 @@ services:
       - "host.docker.internal:${MONITORING_HOST_ADDRESS:-host-gateway}"
     networks: [default, financial-database]
     restart: unless-stopped
+
+  financial-database-migrator:
+    profiles: ["migrations"]
+    image: financial-database-migrator:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PROJECT_PATH: src/Financial.DatabaseMigrator/Financial.DatabaseMigrator.csproj
+        APP_DLL: Financial.DatabaseMigrator.dll
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      ConnectionStrings__FinancialWriteMigrator: "Host=financial-write-db;Port=5432;Database=financial_write_monitoring;Username=financial_write_migrator;Password=${FINANCIAL_WRITE_MIGRATOR_DB_PASSWORD:-};Timeout=5;Command Timeout=30"
+      ConnectionStrings__FinancialReadMigrator: "Host=financial-read-db;Port=5432;Database=financial_read_monitoring;Username=financial_read_migrator;Password=${FINANCIAL_READ_MIGRATOR_DB_PASSWORD:-};Timeout=5;Command Timeout=30"
+    command: ["all"]
+    networks: [default, financial-database]
 
   financial-blackbox-exporter:
     profiles: ["monitoring"]

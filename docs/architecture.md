@@ -71,6 +71,7 @@ A decisão de alta disponibilidade especifica primário/standby síncrono, fenci
 - Logs e métricas não incluem subject, conta, lançamento, idempotency key, descrição ou valor. O middleware devolve `X-Correlation-ID`; ASP.NET e o serviço de domínio geram spans correlacionados. O log de conclusão de cada requisição fica em `Debug` para evitar volume excessivo em carga; os logs informativos do framework ASP.NET ficam em `Warning`.
 - O caminho de escrita publica spans para o lock da conta, lote de comandos PostgreSQL e commit, além de histogramas de duração e tamanho do lote com resultado `success`, `not_found` ou `error`. Esses sinais permitem separar espera pelo lock, execução das gravações e sincronização do commit durante ensaios de carga; não carregam identificadores financeiros.
 - Em ambiente real, segredo JWT fica no provedor de identidade; credenciais de banco devem vir de secret manager. A conexão PostgreSQL exige `SslMode=VerifyFull` fora de Development. Criptografia em repouso e retenção dependem da plataforma e da política aprovada.
+- No sandbox provisionado ou atualizado pelo fluxo de separação de papéis, APIs e projetor usam papéis PostgreSQL sem propriedade do banco, DDL ou `DELETE`. Eles recebem `SELECT`/`INSERT` e as atualizações necessárias ao fluxo; o ledger e a auditoria não podem ser apagados pelo runtime. `Financial.DatabaseMigrator` recebe credenciais separadas de DDL para a etapa de implantação. Os scripts validam propriedade e privilégios dos papéis.
 
 ## Operação e observabilidade
 

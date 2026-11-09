@@ -11,8 +11,8 @@ var builder = Host.CreateApplicationBuilder();
 var environment = builder.Environment;
 if (target is "write" or "all")
 {
-    var connectionString = builder.Configuration.GetConnectionString("FinancialWrite")
-        ?? throw new InvalidOperationException("Configure ConnectionStrings:FinancialWrite.");
+    var connectionString = builder.Configuration.GetConnectionString("FinancialWriteMigrator")
+        ?? throw new InvalidOperationException("Configure ConnectionStrings:FinancialWriteMigrator.");
     ValidateTls(connectionString, environment.IsDevelopment());
     await using var dataSource = NpgsqlDataSource.Create(connectionString);
     await new PostgresFinancialDatabaseInitializer(dataSource).InitializeAsync(CancellationToken.None);
@@ -21,8 +21,8 @@ if (target is "write" or "all")
 
 if (target is "read" or "all")
 {
-    var connectionString = builder.Configuration.GetConnectionString("FinancialRead")
-        ?? throw new InvalidOperationException("Configure ConnectionStrings:FinancialRead.");
+    var connectionString = builder.Configuration.GetConnectionString("FinancialReadMigrator")
+        ?? throw new InvalidOperationException("Configure ConnectionStrings:FinancialReadMigrator.");
     ValidateTls(connectionString, environment.IsDevelopment());
     await using var dataSource = NpgsqlDataSource.Create(connectionString);
     await new PostgresFinancialReadDatabaseInitializer(dataSource).InitializeAsync(CancellationToken.None);

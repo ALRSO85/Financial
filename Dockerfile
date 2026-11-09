@@ -17,4 +17,4 @@ ENV ASPNETCORE_HTTP_PORTS=8080
 ENV APP_DLL=${APP_DLL}
 EXPOSE 8080
 USER $APP_UID
-ENTRYPOINT ["sh", "-c", "exec dotnet \"$APP_DLL\""]
+ENTRYPOINT ["sh", "-c", "exec dotnet \"$APP_DLL\" \"$@\"", "--"]

@@ -210,6 +210,7 @@ sequenceDiagram
 | Premissas e metas operacionais | [`docs/requirements-and-decisions.md`](docs/requirements-and-decisions.md) |
 | Proposta de HA e critérios de failover | [`docs/decisions/adr-0001-postgresql-high-availability.md`](docs/decisions/adr-0001-postgresql-high-availability.md) |
 | Operação, recuperação, reconciliação e troubleshooting | [`docs/runbook.md`](docs/runbook.md), `scripts/Reconcile-FinancialProjection.sh` |
+| Provisionamento e separação de papéis PostgreSQL | `scripts/Initialize-FinancialSandbox.sh`, `scripts/Harden-FinancialSandboxRoles.sh`, perfil Compose `migrations` |
 | Decisões e limites | [`docs/architecture.md`](docs/architecture.md) |
 
 ## Decisões de arquitetura
@@ -230,7 +231,7 @@ Esta revisão substitui o ledger JSON por PostgreSQL, inclui migrations versiona
 
 O saldo consolidado aqui significa saldo contábil resultante de lançamentos ordenados por `OccurredAt` (UTC). Requisitos de data-valor, lançamentos retroativos, ordenação total, estornos, limites/regulação e saldo disponível versus contábil precisam ser definidos pelo produto. Para histórico com alta taxa de consulta, snapshots devem ser reconstruíveis e conciliados com o ledger.
 
-As APIs exigem escopos distintos, limitam taxa e tamanho de payload e recusam chave JWT simétrica fora de `Development`. Movimentações e consultas geram auditoria estruturada; logs e métricas não registram valores nem identificadores de clientes. Traces, métricas OTLP e health checks podem ser enviados ao backend configurado pelo ambiente. TLS e criptografia em repouso dependem da plataforma de banco e da terminação HTTPS; o ambiente local não simula essas proteções. Carga, failover real e restauração ainda precisam ser exercitados com as metas definidas.
+As APIs exigem escopos distintos, limitam taxa e tamanho de payload e recusam chave JWT simétrica fora de `Development`. Movimentações e consultas geram auditoria estruturada; logs e métricas não registram valores nem identificadores de clientes. Traces, métricas OTLP e health checks podem ser enviados ao backend configurado pelo ambiente. No sandbox preparado pelos scripts de provisionamento/hardening, os papéis de runtime têm `SELECT`/`INSERT` e as atualizações necessárias, sem `DELETE` ou DDL; somente os papéis separados do `Financial.DatabaseMigrator` aplicam DDL. TLS e criptografia em repouso dependem da plataforma de banco e da terminação HTTPS; o ambiente local não simula essas proteções. Carga, failover real e restauração ainda precisam ser exercitados com as metas definidas.
 
 ## Contrato resumido
 
