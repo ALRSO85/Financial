@@ -4,22 +4,11 @@ API demonstrativa em C#/.NET para registrar créditos e débitos e consultar sal
 
 ## Stack
 
-- C# e .NET 10 / ASP.NET Core Minimal APIs
-- Swagger e OpenAPI com Swashbuckle
-- Autenticação JWT Bearer
-- Persistência transacional em PostgreSQL com Npgsql; JSON permanece disponível somente para testes isolados
-- Outbox transacional e projeção de leitura idempotente
-- Health checks e telemetria OpenTelemetry/OTLP
-- Escopos JWT, rate limiting e limites de requisição
-- Testes automatizados com xUnit e `Microsoft.AspNetCore.Mvc.Testing`
-- Integração contínua com GitHub Actions
+O projeto usa C# e .NET 10 com ASP.NET Core Minimal APIs, Swagger/OpenAPI e autenticação JWT Bearer. A persistência transacional roda em PostgreSQL via Npgsql; o adapter JSON fica restrito a testes. A outbox atualiza a projeção de leitura de forma idempotente. Health checks, OpenTelemetry/OTLP, limites por escopo e testes xUnit fazem parte da solução; o GitHub Actions executa o CI.
 
 ## Requisitos
 
-- .NET SDK 10.0.402 (ou patch posterior da linha 10.0)
-- PowerShell no Windows (`powershell.exe`) ou PowerShell 7 no Linux/macOS (`pwsh`), para executar os scripts locais (`.ps1`)
-- Docker Desktop ou Docker Engine com Compose, para os bancos PostgreSQL locais e testes de integração
-- Windows, Linux ou macOS
+Para compilar, instale o .NET SDK 10.0.402 ou um patch posterior da linha 10.0. Os scripts locais usam Windows PowerShell (`powershell.exe`) ou PowerShell 7 (`pwsh`). Os bancos locais e os testes de integração precisam de Docker Desktop ou Docker Engine com Compose. O projeto pode ser executado no Windows, Linux ou macOS.
 
 ## Executar localmente
 
@@ -217,15 +206,16 @@ sequenceDiagram
 
 ## Decisões de arquitetura
 
-- **Ledger append-only:** cada operação aprovada gera uma entrada de valor assinado e nunca se altera/exclui; correções futuras devem ser novos lançamentos compensatórios e auditáveis.
-- **Centavos inteiros:** evita arredondamento binário de ponto flutuante. `long` tem limite finito, validado por aritmética checked.
-- **Moeda assumida:** os valores em centavos representam reais (BRL). O modelo não converte moedas.
-- **Persistência transacional:** PostgreSQL registra conta, saldo, lançamento, auditoria e outbox. A linha da conta fica bloqueada durante a validação do débito; constraints no banco protegem a idempotência entre instâncias.
-- **Leitura separada:** a API de consulta usa outro banco e não precisa conectar ao serviço nem ao banco de escrita. `dataAsOf` mostra a atualidade da projeção, cuja consistência é eventual.
-- **Outbox:** o evento é inserido na mesma transação financeira. O projetor aplica-o idempotentemente; se parar, a leitura mantém a última projeção e o backlog pode ser recuperado após reiniciar.
-- **JSON:** permanece apenas como adapter de apoio a testes locais; não é o armazenamento padrão da aplicação.
-- **Idempotência:** chave única por conta; repetição com os mesmos campos devolve o lançamento original, e conteúdo diferente na mesma chave retorna 409.
-- **DDD e Clean Architecture proporcionais:** `Account` protege regras do agregado; `Money` encapsula centavos; `FinancialEntry` é imutável. A aplicação define portas, e os adapters PostgreSQL ficam na infraestrutura. A API opera nos modos `write` e `read`; `combined` é restrito a testes e desenvolvimento.
+| Escolha | Como foi aplicada |
+| --- | --- |
+| Ledger imutável | Cada operação gera um lançamento de valor assinado. Correções são novos lançamentos compensatórios. |
+| Centavos inteiros | Evitam arredondamento de ponto flutuante. O domínio usa `long` e valida overflow. |
+| Moeda | O exercício assume BRL; conversão cambial não faz parte do modelo. |
+| Persistência | PostgreSQL grava conta, saldo, lançamento, auditoria e outbox na mesma transação. Lock por conta e constraints protegem as gravações concorrentes e a idempotência. |
+| Leitura | A API de consulta usa outro banco e informa a atualidade da projeção em `dataAsOf`. A consistência é eventual. |
+| Outbox | O projetor atualiza a leitura de forma idempotente. Se parar, a consulta mantém a última posição e o backlog pode ser processado depois. |
+| JSON | Fica disponível para testes locais; não é o armazenamento operacional do ledger. |
+| Organização do domínio | `Account` protege as regras da conta, `Money` representa valores e `FinancialEntry` é imutável. A aplicação define as portas, e a infraestrutura contém os adapters PostgreSQL. A API roda em modos `write` e `read`; `combined` fica restrito a testes e desenvolvimento. |
 
 ## Limites e evolução para produção
 

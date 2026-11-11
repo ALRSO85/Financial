@@ -1,8 +1,10 @@
 # ADR-0001: Alta disponibilidade do PostgreSQL
 
-- **Status:** proposta para validação do negócio e da plataforma; não implementada no host de ensaio.
-- **Data:** 09/11/2026.
-- **Decisores pendentes:** responsáveis técnicos e de produto da empresa.
+| Campo | Valor |
+| --- | --- |
+| Estado | Proposta para validação; ainda não implementada no host de ensaio. |
+| Data | 09/11/2026 |
+| Decisão pendente de | Responsáveis de produto, arquitetura e plataforma |
 
 ## Contexto
 
@@ -12,21 +14,21 @@ As metas de avaliação registradas em [`requirements-and-decisions.md`](../requ
 
 ## Decisão proposta
 
-1. **Banco de escrita:** usar PostgreSQL gerenciado com primário e standby síncrono em domínios de falha distintos. Só responder sucesso após commit durável no primário e confirmação síncrona do standby (`synchronous_standby_names` e `synchronous_commit=on`, ou controles equivalentes documentados pelo serviço gerenciado). Se não houver standby elegível, a política financeira é falhar/aguardar sem confirmar novos lançamentos; não reduzir silenciosamente a durabilidade para preservar disponibilidade.
-2. **Promoção e fencing:** usar o failover gerenciado pelo provedor ou um coordenador HA aprovado, com endpoint estável e fencing do primário antigo antes de aceitar escrita no promovido. A replicação do PostgreSQL, isoladamente, não detecta falha nem escolhe com segurança quem deve ser primário. A recuperação do antigo primário deve incluir ressincronização antes de reintegrá-lo.
-3. **Banco de leitura:** manter datastore e deployment independentes da escrita, com HA própria apropriada ao SLO. A projeção é reconstruível a partir da outbox retida; durante a recuperação, a API expõe `dataAsOf` e o estado de prontidão/degradação.
-4. **Aplicações:** executar múltiplas instâncias stateless de cada API atrás de load balancer com probes de readiness. O worker pode ter mais de uma instância, mantendo exclusão/idempotência no PostgreSQL. Requisições de escrita usam idempotency key também após timeout e reconexão.
-5. **Recuperação:** manter backups cifrados/PITR em armazenamento fora das zonas primária e standby. A réplica reduz o tempo de promoção, mas não substitui backup contra corrupção lógica, exclusão ou comprometimento de credenciais.
+Para escrita, usar PostgreSQL gerenciado com primário e standby síncrono em domínios de falha distintos. A aplicação só deve responder sucesso depois do commit durável e da confirmação da standby (`synchronous_standby_names` e `synchronous_commit=on`, ou controles equivalentes documentados pelo provedor). Se não houver standby elegível, a operação falha sem confirmar o lançamento; a durabilidade não deve ser reduzida silenciosamente para preservar disponibilidade.
+
+A promoção deve ser gerenciada pelo provedor ou por um coordenador HA aprovado. O serviço precisa manter um endpoint estável e cercar o primário antigo antes de aceitar escritas no promovido. A replicação, por si só, não detecta uma falha nem escolhe o primário. Antes de reintegrar o nó antigo, é necessário ressincronizá-lo.
+
+O banco de leitura deve ter implantação e HA próprias, adequadas ao SLO aprovado. A projeção pode ser refeita a partir da outbox retida; durante a recuperação, a API informa `dataAsOf` e o estado de prontidão. As APIs devem rodar em várias instâncias stateless atrás de um balanceador com readiness probes. O worker pode ter mais de uma instância se a exclusão e a idempotência continuarem garantidas pelo PostgreSQL. Clientes devem repetir escritas com a mesma chave idempotente após timeout ou reconexão.
+
+Os backups e o PITR, quando disponíveis, devem ficar cifrados fora das zonas do primário e da standby. A réplica reduz o tempo de promoção, mas não protege contra corrupção lógica, exclusão ou comprometimento de credenciais.
 
 PostgreSQL oferece replicação síncrona como mecanismo para esperar a confirmação da standby, e a configuração de failover precisa de software/procedimento externo que detecte a queda, promova a standby e impeça split brain. Consulte a [documentação de replicação síncrona](https://www.postgresql.org/docs/17/warm-standby.html#SYNCHRONOUS-REPLICATION) e a [documentação de failover](https://www.postgresql.org/docs/17/warm-standby-failover.html).
 
 ## Consequências e trade-offs
 
-- A confirmação síncrona adiciona latência de rede e pode reduzir disponibilidade de escrita quando a standby ou o link interzonal falha. A aplicação deve privilegiar não confirmar operações financeiras cuja durabilidade exigida não foi atendida.
-- O RPO 0 vale somente para commits confirmados segundo a configuração síncrona e para um failover que promova uma standby contendo esses commits. Não é uma garantia deste repositório nem do container local.
-- O RTO depende do tempo de detecção, fencing, promoção, atualização de endpoint, reconexão dos pools e validação pós-failover. Deve ser medido em drill, não inferido da configuração.
-- O read model pode estar atrasado em relação à escrita. A API informa sua atualidade; ela não deve fazer fallback síncrono para o banco de escrita sem uma decisão de consistência e disponibilidade.
-- Uma réplica no mesmo host não atende a perda de host/zona. Dois bancos Docker locais continuam sendo um ambiente de demonstração.
+A confirmação síncrona acrescenta latência de rede e pode reduzir a disponibilidade de escrita quando a standby ou o link interzonal falha. Nesse caso, a aplicação deve deixar de confirmar operações cuja durabilidade não foi atendida. RPO 0 só vale para commits confirmados pela réplica promovida; esta configuração local não oferece essa garantia.
+
+O RTO depende do tempo de detecção, fencing, promoção, atualização do endpoint, reconexão dos pools e validação. Deve ser medido em um exercício, não deduzido da configuração. A leitura pode ficar atrasada; sem uma decisão explícita de consistência, a API não deve consultar o banco de escrita como fallback. Uma réplica no mesmo host também não protege contra a perda desse host ou da zona.
 
 ## Critérios de aceite antes de afirmar HA
 

@@ -187,10 +187,9 @@ O script pede confirmação. Depois da reconstrução, inicie a API de leitura p
 
 ## Health, sinais e alertas
 
-- `GET /health/live`: processo ativo; não verifica dependências.
-- `GET /health/ready`: banco de dados acessível. A API de leitura também retorna o estado do heartbeat, backlog e dead letters do projetor. A degradação de projeção não remove a API de leitura do balanceador, pois o último saldo projetado continua disponível.
-- `X-Correlation-ID` e spans HTTP/caso de uso correlacionam uma solicitação. Não use valor de token, subject, identificador de conta ou conteúdo financeiro como label de métrica.
-- Configure `OTEL_EXPORTER_OTLP_ENDPOINT` para enviar métricas e traces a um collector/backend. A aplicação não inclui armazenamento de telemetria ou dashboard.
+Use `/health/live` para confirmar que o processo responde e `/health/ready` para verificar o banco. Na API de leitura, readiness também informa heartbeat, backlog e dead letters do projetor. Quando a projeção está degradada, a API continua apta a servir o último saldo projetado.
+
+`X-Correlation-ID` e os spans HTTP/caso de uso ajudam a acompanhar uma solicitação. Não inclua token, subject, identificador de conta ou conteúdo financeiro em labels de métricas. Configure `OTEL_EXPORTER_OTLP_ENDPOINT` para enviar traces e métricas a um collector/backend; a aplicação não mantém armazenamento de telemetria nem dashboard próprio.
 
 Alertas iniciais a configurar no backend:
 
